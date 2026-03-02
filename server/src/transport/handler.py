@@ -81,10 +81,11 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
         from src.pipelines.base import BasePipeline
 
         produces_text = type(pipeline).process_text is not BasePipeline.process_text
+        produces_audio = type(pipeline).process is not BasePipeline.process
         tasks = [stats_loop()]
         if produces_text:
             tasks.append(forward_text())
-        else:
+        if produces_audio:
             tasks.append(forward_output())
         await asyncio.gather(*tasks)
     except Exception:
