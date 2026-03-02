@@ -12,6 +12,7 @@ import {
 } from "@mantine/core";
 import { IconMoon, IconSun } from "@tabler/icons-react";
 import type { Session } from "./api/index.ts";
+import type { AudioSource } from "./components/NewSessionModal.tsx";
 import { updateSession } from "./api/index.ts";
 import { ServerStatsPanel } from "./components/ServerStatsPanel.tsx";
 import { SessionListPanel } from "./components/SessionListPanel.tsx";
@@ -30,6 +31,7 @@ interface ActiveSession {
   session: Session;
   inputDeviceId: string;
   outputDeviceId: string;
+  audioSource: AudioSource;
 }
 
 function ColorSchemeToggle() {
@@ -61,13 +63,19 @@ function AppContent() {
       channels: activeSession.session.channels,
       inputDeviceId: activeSession.inputDeviceId,
       outputDeviceId: activeSession.outputDeviceId,
+      audioSource: activeSession.audioSource,
     };
   }, [activeSession]);
 
   const { connected, liveStats, transcript, stop } = useAudioStream(streamOptions);
 
-  const handleCreated = (session: Session, inputDeviceId: string, outputDeviceId: string) => {
-    setActiveSession({ session, inputDeviceId, outputDeviceId });
+  const handleCreated = (
+    session: Session,
+    inputDeviceId: string,
+    outputDeviceId: string,
+    audioSource: AudioSource,
+  ) => {
+    setActiveSession({ session, inputDeviceId, outputDeviceId, audioSource });
     setSelectedId(session.id);
     refresh();
   };

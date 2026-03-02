@@ -65,7 +65,7 @@ export function ActiveSessionPanel({
             <Text fw={500} size="sm" mt="xs">
               Transcript
             </Text>
-            <ScrollArea h={200} viewportRef={scrollRef} offsetScrollbars>
+            <ScrollArea h={200} viewportRef={scrollRef} offsetScrollbars data-testid="transcript-area">
               <Stack gap={4}>
                 {transcript.map((line, i) => (
                   <Text key={i} size="sm" c="dimmed">

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionStats } from "../api/index.ts";
+import type { AudioSource } from "../components/NewSessionModal.tsx";
 import type { StreamTransport, TransportEvent } from "../transport/index.ts";
 import { WebSocketTransport } from "../transport/index.ts";
 
@@ -9,6 +10,54 @@ interface AudioStreamOptions {
   channels: number;
   inputDeviceId: string;
   outputDeviceId: string;
+  audioSource: AudioSource;
+}
+
+const CHUNK_SIZE = 4096;
+
+function floatToInt16(pcm: Float32Array): Int16Array {
+  const i16 = new Int16Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return i16;
+}
+
+async function streamFileAudio(
+  file: File,
+  sampleRate: number,
+  transport: StreamTransport,
+  audioCtx: AudioContext,
+  cancelledRef: { current: boolean },
+): Promise<void> {
+  const arrayBuffer = await file.arrayBuffer();
+  const decoded = await audioCtx.decodeAudioData(arrayBuffer);
+
+  const offlineCtx = new OfflineAudioContext(1, Math.ceil(decoded.duration * sampleRate), sampleRate);
+  const src = offlineCtx.createBufferSource();
+  src.buffer = decoded;
+  src.connect(offlineCtx.destination);
+  src.start();
+  const rendered = await offlineCtx.startRendering();
+
+  const pcm = rendered.getChannelData(0);
+  const chunkDurationMs = (CHUNK_SIZE / sampleRate) * 1000;
+
+  for (let offset = 0; offset < pcm.length; offset += CHUNK_SIZE) {
+    if (cancelledRef.current) return;
+    const end = Math.min(offset + CHUNK_SIZE, pcm.length);
+    const chunk = pcm.subarray(offset, end);
+    const i16 = floatToInt16(chunk);
+    transport.sendAudio(i16.buffer as ArrayBuffer);
+    await new Promise((r) => setTimeout(r, chunkDurationMs));
+  }
+
+  // Signal end-of-audio with an empty frame so the server processes
+  // the final buffer without closing the WebSocket connection.
+  if (!cancelledRef.current) {
+    transport.sendAudio(new ArrayBuffer(0));
+  }
 }
 
 export function useAudioStream(options: AudioStreamOptions | null) {
@@ -18,8 +67,10 @@ export function useAudioStream(options: AudioStreamOptions | null) {
   const transportRef = useRef<StreamTransport | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cancelledRef = useRef(false);
 
   const stop = useCallback(() => {
+    cancelledRef.current = true;
     transportRef.current?.close();
     transportRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -33,11 +84,10 @@ export function useAudioStream(options: AudioStreamOptions | null) {
 
   useEffect(() => {
     if (!options) return;
-    let cancelled = false;
+    cancelledRef.current = false;
 
     async function start() {
-      const { sessionId, sampleRate, inputDeviceId, outputDeviceId } =
-        options!;
+      const { sessionId, sampleRate, audioSource, inputDeviceId, outputDeviceId } = options!;
 
       const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${wsProto}//${location.host}/ws/stream/${sessionId}`;
@@ -48,7 +98,7 @@ export function useAudioStream(options: AudioStreamOptions | null) {
       } catch {
         return;
       }
-      if (cancelled) {
+      if (cancelledRef.current) {
         transport.close();
         return;
       }
@@ -59,36 +109,35 @@ export function useAudioStream(options: AudioStreamOptions | null) {
       const audioCtx = new AudioContext({ sampleRate });
       contextRef.current = audioCtx;
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: inputDeviceId ? { exact: inputDeviceId } : undefined,
-          sampleRate: { ideal: sampleRate },
-          channelCount: { ideal: options!.channels },
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
-      if (cancelled) {
-        stream.getTracks().forEach((t) => t.stop());
-        transport.close();
-        return;
-      }
-      streamRef.current = stream;
-
-      const source = audioCtx.createMediaStreamSource(stream);
-      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-      processor.onaudioprocess = (e: AudioProcessingEvent) => {
-        const pcm = e.inputBuffer.getChannelData(0);
-        const i16 = new Int16Array(pcm.length);
-        for (let i = 0; i < pcm.length; i++) {
-          const s = Math.max(-1, Math.min(1, pcm[i]));
-          i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+      if (audioSource.type === "mic") {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            deviceId: inputDeviceId ? { exact: inputDeviceId } : undefined,
+            sampleRate: { ideal: sampleRate },
+            channelCount: { ideal: options!.channels },
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+        if (cancelledRef.current) {
+          stream.getTracks().forEach((t) => t.stop());
+          transport.close();
+          return;
         }
-        transport.sendAudio(i16.buffer);
-      };
-      source.connect(processor);
-      processor.connect(audioCtx.destination);
+        streamRef.current = stream;
+
+        const source = audioCtx.createMediaStreamSource(stream);
+        const processor = audioCtx.createScriptProcessor(CHUNK_SIZE, 1, 1);
+        processor.onaudioprocess = (e: AudioProcessingEvent) => {
+          const pcm = e.inputBuffer.getChannelData(0);
+          transport.sendAudio(floatToInt16(pcm).buffer as ArrayBuffer);
+        };
+        source.connect(processor);
+        processor.connect(audioCtx.destination);
+      } else if (audioSource.type === "file" && audioSource.file) {
+        streamFileAudio(audioSource.file, sampleRate, transport, audioCtx, cancelledRef);
+      }
 
       transport.onAudio((buf: ArrayBuffer) => {
         const i16 = new Int16Array(buf);
@@ -126,7 +175,7 @@ export function useAudioStream(options: AudioStreamOptions | null) {
 
     start();
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
       stop();
     };
   }, [options?.sessionId]);
