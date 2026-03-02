@@ -63,25 +63,21 @@ def _translate_audio_sync(
             tgt_lang="spa",
             generate_speech=False,
         )
-    sequences = output.sequences if hasattr(output, "sequences") else output
-    if sequences.dim() == 1:
-        sequences = sequences.unsqueeze(0)
+    sequences = output[0] if isinstance(output, (tuple, list)) else output
+    if hasattr(sequences, "sequences"):
+        sequences = sequences.sequences
     token_list = sequences[0].tolist()
-    logger.debug(
-        "generate: type=%s tokens=%s",
-        type(output).__name__, token_list,
-    )
-    raw_text: str = processor.decode(token_list, skip_special_tokens=False)
-    text: str = processor.decode(token_list, skip_special_tokens=True)
-    logger.debug(
-        "decode: token_list=%s raw=%r clean=%r",
-        token_list, raw_text[:200], text[:200],
-    )
-    if not text:
-        text = processor.tokenizer.decode(
-            token_list, skip_special_tokens=True
-        )
-        logger.debug("tokenizer fallback: %r", text[:200])
+    logger.debug("generate tokens: %s", token_list)
+
+    tok = processor.tokenizer
+    special_ids = set(tok.all_special_ids)
+    sp_limit = tok.sp_model.get_piece_size() + tok.fairseq_offset
+    filtered = [
+        t for t in token_list
+        if t not in special_ids and t < sp_limit
+    ]
+    text: str = tok.decode(filtered, skip_special_tokens=False)
+    logger.debug("decoded: %r", text[:200])
     return text.strip()
 
 
@@ -168,8 +164,15 @@ class SpanishDirectPipeline(BasePipeline):
 
     @staticmethod
     def _load_model() -> tuple[Any, Any]:
+        import json
+
         from huggingface_hub import try_to_load_from_cache
-        from transformers import AutoProcessor, SeamlessM4Tv2Model
+        from transformers import (
+            SeamlessM4TFeatureExtractor,
+            SeamlessM4TProcessor,
+            SeamlessM4TTokenizer,
+            SeamlessM4Tv2Model,
+        )
 
         model_id = "facebook/seamless-m4t-v2-large"
         cached = try_to_load_from_cache(model_id, "config.json")
@@ -178,9 +181,40 @@ class SpanishDirectPipeline(BasePipeline):
             logger.info("Loading SeamlessM4T from cache")
         else:
             logger.info("Downloading SeamlessM4T from HuggingFace")
-        processor = AutoProcessor.from_pretrained(
+
+        sp_path = try_to_load_from_cache(model_id, "tokenizer.model")
+        if not isinstance(sp_path, str):
+            from huggingface_hub import hf_hub_download
+
+            sp_path = hf_hub_download(model_id, "tokenizer.model")
+
+        cfg_path = try_to_load_from_cache(
+            model_id, "tokenizer_config.json"
+        )
+        if not isinstance(cfg_path, str):
+            from huggingface_hub import hf_hub_download
+
+            cfg_path = hf_hub_download(
+                model_id, "tokenizer_config.json"
+            )
+        with open(cfg_path) as f:
+            additional = json.load(f).get(
+                "additional_special_tokens", []
+            )
+
+        tokenizer = SeamlessM4TTokenizer(
+            vocab_file=sp_path,
+            src_lang="eng",
+            tgt_lang="spa",
+            additional_special_tokens=additional,
+        )
+        feat_ext = SeamlessM4TFeatureExtractor.from_pretrained(
             model_id, local_files_only=local_only
         )
+        processor = SeamlessM4TProcessor(
+            feature_extractor=feat_ext, tokenizer=tokenizer
+        )
+
         model = SeamlessM4Tv2Model.from_pretrained(
             model_id, local_files_only=local_only
         )

@@ -27,6 +27,7 @@ describe("generated types", () => {
         chunks_sent: 0,
         duration_seconds: 0,
         pipeline_latency_ms: 0,
+        audio_delay_seconds: 0,
       },
     };
     expect(session.id).toBe("abc");

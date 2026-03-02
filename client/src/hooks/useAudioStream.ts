@@ -68,31 +68,27 @@ export function useAudioStream(options: AudioStreamOptions | null) {
   const [connected, setConnected] = useState(false);
   const [liveStats, setLiveStats] = useState<SessionStats | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, TranscriptLine[]>>({});
-  const [playbackDelay, setPlaybackDelay] = useState(0);
   const transportRef = useRef<StreamTransport | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cancelledRef = useRef(false);
-  const nextPlayTimeRef = useRef(0);
-  const delayIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stop = useCallback(() => {
     cancelledRef.current = true;
+    transportRef.current?.sendEvent({
+      type: "session.stop",
+      session_id: "",
+      payload: {},
+    });
     transportRef.current?.close();
     transportRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     contextRef.current?.close();
     contextRef.current = null;
-    nextPlayTimeRef.current = 0;
-    if (delayIntervalRef.current) {
-      clearInterval(delayIntervalRef.current);
-      delayIntervalRef.current = null;
-    }
     setConnected(false);
     setLiveStats(null);
     setTranscripts({});
-    setPlaybackDelay(0);
   }, []);
 
   useEffect(() => {
@@ -170,18 +166,8 @@ export function useAudioStream(options: AudioStreamOptions | null) {
         }
 
         src.connect(audioCtx.destination);
-
-        const now = audioCtx.currentTime;
-        const startAt = Math.max(now, nextPlayTimeRef.current);
-        src.start(startAt);
-        nextPlayTimeRef.current = startAt + abuf.duration;
+        src.start();
       });
-
-      delayIntervalRef.current = setInterval(() => {
-        if (!audioCtx || audioCtx.state === "closed") return;
-        const behind = Math.max(0, nextPlayTimeRef.current - audioCtx.currentTime);
-        setPlaybackDelay(behind);
-      }, 250);
 
       transport.onEvent((evt: TransportEvent) => {
         if (evt.type === "session.stats") {
@@ -209,5 +195,5 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     };
   }, [options?.sessionId]);
 
-  return { connected, liveStats, transcripts, playbackDelay, stop };
+  return { connected, liveStats, transcripts, stop };
 }

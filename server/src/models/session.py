@@ -47,6 +47,7 @@ class SessionStats(BaseModel):
     chunks_sent: int = 0
     duration_seconds: float = 0.0
     pipeline_latency_ms: float = 0.0
+    audio_delay_seconds: float = 0.0
 
 
 class Session(BaseModel):

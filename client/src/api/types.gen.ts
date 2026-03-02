@@ -35,6 +35,7 @@ export interface SessionStats {
   chunks_sent: number;
   duration_seconds: number;
   pipeline_latency_ms: number;
+  audio_delay_seconds: number;
 }
 
 export interface Session {

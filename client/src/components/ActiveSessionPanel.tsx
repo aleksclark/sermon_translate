@@ -49,7 +49,6 @@ export function ActiveSessionPanel({
   liveStats,
   transcripts,
   streamLabels,
-  playbackDelay,
   onStop,
 }: {
   sessionId: string;
@@ -58,7 +57,6 @@ export function ActiveSessionPanel({
   liveStats: SessionStats | null;
   transcripts: Record<string, TranscriptLine[]>;
   streamLabels: Record<string, string>;
-  playbackDelay: number;
   onStop: () => void;
 }) {
   const streamNames = Object.keys(transcripts);
@@ -91,9 +89,9 @@ export function ActiveSessionPanel({
             <Text size="sm">
               Pipeline Latency: {liveStats.pipeline_latency_ms.toFixed(0)}ms
             </Text>
-            {playbackDelay > 0 && (
-              <Text size="sm" c={playbackDelay > 5 ? "red" : playbackDelay > 2 ? "yellow" : undefined}>
-                Playback Buffer: {playbackDelay.toFixed(1)}s behind
+            {liveStats.audio_delay_seconds > 0 && (
+              <Text size="sm" c={liveStats.audio_delay_seconds > 5 ? "red" : liveStats.audio_delay_seconds > 2 ? "yellow" : undefined}>
+                Audio Delay: {liveStats.audio_delay_seconds.toFixed(1)}s
               </Text>
             )}
           </>

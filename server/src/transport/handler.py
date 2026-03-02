@@ -43,12 +43,15 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
 
     stats_tracker = get_server_stats()
     start_time = time.monotonic()
+    stop_event = asyncio.Event()
 
     try:
         audio_queues: list[asyncio.Queue[bytes | None]] = []
 
         async def audio_input() -> None:
             async for chunk in transport.recv_audio():
+                if stop_event.is_set():
+                    break
                 session.stats.bytes_received += len(chunk)
                 session.stats.chunks_received += 1
                 for q in audio_queues:
@@ -64,17 +67,34 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
                 yield item
 
         async def forward_audio(stream: AsyncIterator[bytes]) -> None:
+            next_play = time.monotonic()
             async for chunk in pipeline.process(stream):
+                if stop_event.is_set():
+                    break
                 session.stats.bytes_sent += len(chunk)
                 session.stats.chunks_sent += 1
                 stats_tracker.total_bytes_processed += len(chunk)
+
+                now = time.monotonic()
+                next_play = max(now, next_play)
+                delay = next_play - now
+                if delay > 0:
+                    await asyncio.sleep(delay)
                 await transport.send_audio(chunk)
+
+                duration = len(chunk) / (session.sample_rate * 2)
+                next_play += duration
+                session.stats.audio_delay_seconds = round(
+                    max(0.0, next_play - time.monotonic()), 1
+                )
 
         async def forward_text(name: str, stream: AsyncIterator[bytes]) -> None:
             it = pipeline.iter_stream(name, stream)
             if it is None:
                 return
             async for text in it:
+                if stop_event.is_set():
+                    break
                 await transport.send_event(
                     TransportEvent(
                         type=EventType.PIPELINE_EVENT,
@@ -84,7 +104,7 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
                 )
 
         async def stats_loop() -> None:
-            while session.status == SessionStatus.ACTIVE:
+            while session.status == SessionStatus.ACTIVE and not stop_event.is_set():
                 session.stats.duration_seconds = round(time.monotonic() - start_time, 1)
                 session.stats.pipeline_latency_ms = 5000.0
                 await transport.send_event(
@@ -96,7 +116,19 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
                 )
                 await asyncio.sleep(1)
 
-        tasks: list[asyncio.Task | asyncio.Future] = [asyncio.ensure_future(stats_loop())]
+        async def listen_for_stop() -> None:
+            async for evt in transport.recv_event():
+                if evt.type == EventType.SESSION_STOP:
+                    logger.info("client requested stop for session %s", session_id)
+                    stop_event.set()
+                    for q in audio_queues:
+                        await q.put(None)
+                    return
+
+        tasks: list[asyncio.Task | asyncio.Future] = [
+            asyncio.ensure_future(stats_loop()),
+            asyncio.ensure_future(listen_for_stop()),
+        ]
 
         has_audio = False
         for desc in pipeline.output_streams:

@@ -13,7 +13,6 @@ import {
 import { IconMoon, IconSun } from "@tabler/icons-react";
 import type { PipelineInfo, Session } from "./api/index.ts";
 import type { AudioSource } from "./components/NewSessionModal.tsx";
-import { updateSession } from "./api/index.ts";
 import { ServerStatsPanel } from "./components/ServerStatsPanel.tsx";
 import { SessionListPanel } from "./components/SessionListPanel.tsx";
 import { NewSessionModal } from "./components/NewSessionModal.tsx";
@@ -68,7 +67,7 @@ function AppContent() {
     };
   }, [activeSession]);
 
-  const { connected, liveStats, transcripts, playbackDelay, stop } = useAudioStream(streamOptions);
+  const { connected, liveStats, transcripts, stop } = useAudioStream(streamOptions);
 
   const streamLabels = useMemo(() => {
     if (!activeSession) return {};
@@ -94,16 +93,8 @@ function AppContent() {
   };
 
   const handleStop = async () => {
-    const id = activeSession?.session.id;
     stop();
     setActiveSession(null);
-    if (id) {
-      try {
-        await updateSession(id, { status: "closed" });
-      } catch {
-        // server may have already closed it
-      }
-    }
     refresh();
   };
 
@@ -140,7 +131,6 @@ function AppContent() {
                   liveStats={liveStats}
                   transcripts={transcripts}
                   streamLabels={streamLabels}
-                  playbackDelay={playbackDelay}
                   onStop={handleStop}
                 />
               )}
