@@ -13,6 +13,12 @@ interface AudioStreamOptions {
   audioSource: AudioSource;
 }
 
+export interface TranscriptLine {
+  stream: string;
+  text: string;
+  timestamp: number;
+}
+
 const CHUNK_SIZE = 4096;
 
 function floatToInt16(pcm: Float32Array): Int16Array {
@@ -53,8 +59,6 @@ async function streamFileAudio(
     await new Promise((r) => setTimeout(r, chunkDurationMs));
   }
 
-  // Signal end-of-audio with an empty frame so the server processes
-  // the final buffer without closing the WebSocket connection.
   if (!cancelledRef.current) {
     transport.sendAudio(new ArrayBuffer(0));
   }
@@ -63,11 +67,14 @@ async function streamFileAudio(
 export function useAudioStream(options: AudioStreamOptions | null) {
   const [connected, setConnected] = useState(false);
   const [liveStats, setLiveStats] = useState<SessionStats | null>(null);
-  const [transcript, setTranscript] = useState<string[]>([]);
+  const [transcripts, setTranscripts] = useState<Record<string, TranscriptLine[]>>({});
+  const [playbackDelay, setPlaybackDelay] = useState(0);
   const transportRef = useRef<StreamTransport | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cancelledRef = useRef(false);
+  const nextPlayTimeRef = useRef(0);
+  const delayIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stop = useCallback(() => {
     cancelledRef.current = true;
@@ -77,9 +84,15 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     streamRef.current = null;
     contextRef.current?.close();
     contextRef.current = null;
+    nextPlayTimeRef.current = 0;
+    if (delayIntervalRef.current) {
+      clearInterval(delayIntervalRef.current);
+      delayIntervalRef.current = null;
+    }
     setConnected(false);
     setLiveStats(null);
-    setTranscript([]);
+    setTranscripts({});
+    setPlaybackDelay(0);
   }, []);
 
   useEffect(() => {
@@ -157,14 +170,30 @@ export function useAudioStream(options: AudioStreamOptions | null) {
         }
 
         src.connect(audioCtx.destination);
-        src.start();
+
+        const now = audioCtx.currentTime;
+        const startAt = Math.max(now, nextPlayTimeRef.current);
+        src.start(startAt);
+        nextPlayTimeRef.current = startAt + abuf.duration;
       });
+
+      delayIntervalRef.current = setInterval(() => {
+        if (!audioCtx || audioCtx.state === "closed") return;
+        const behind = Math.max(0, nextPlayTimeRef.current - audioCtx.currentTime);
+        setPlaybackDelay(behind);
+      }, 250);
 
       transport.onEvent((evt: TransportEvent) => {
         if (evt.type === "session.stats") {
           setLiveStats(evt.payload as unknown as SessionStats);
         } else if (evt.type === "pipeline.event" && evt.payload.kind === "transcript") {
-          setTranscript((prev) => [...prev, evt.payload.text as string]);
+          const streamName = (evt.payload.stream as string) || "transcript";
+          const text = evt.payload.text as string;
+          const line: TranscriptLine = { stream: streamName, text, timestamp: Date.now() };
+          setTranscripts((prev) => ({
+            ...prev,
+            [streamName]: [...(prev[streamName] || []), line],
+          }));
         }
       });
 
@@ -180,5 +209,5 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     };
   }, [options?.sessionId]);
 
-  return { connected, liveStats, transcript, stop };
+  return { connected, liveStats, transcripts, playbackDelay, stop };
 }

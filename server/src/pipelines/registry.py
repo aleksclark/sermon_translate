@@ -4,6 +4,7 @@ from src.models import PipelineInfo
 from src.pipelines.base import BasePipeline
 from src.pipelines.echo import EchoPipeline
 from src.pipelines.spanish import SpanishTranslationPipeline
+from src.pipelines.spanish_direct import SpanishDirectPipeline
 from src.pipelines.whisper_tts import WhisperTTSPipeline
 
 
@@ -31,4 +32,5 @@ def create_default_registry() -> PipelineRegistry:
     registry.register(EchoPipeline())
     registry.register(WhisperTTSPipeline())
     registry.register(SpanishTranslationPipeline())
+    registry.register(SpanishDirectPipeline())
     return registry

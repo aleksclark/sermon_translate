@@ -84,7 +84,7 @@ class TestSpanishTranslationPipeline:
         assert len(output) >= 1
         assert all(isinstance(c, bytes) and len(c) > 0 for c in output)
 
-    async def test_process_text_yields_transcript(self) -> None:
+    async def test_iter_stream_yields_transcripts(self) -> None:
         p = SpanishTranslationPipeline(sample_rate=16000)
         p._whisper_model = _make_mock_whisper(["Hello."])
         p._translator = MagicMock()
@@ -100,20 +100,27 @@ class TestSpanishTranslationPipeline:
             "src.pipelines.spanish._synthesize_spanish",
             new=AsyncMock(return_value=fake_pcm),
         ):
-            text_iter = p.process_text(input_stream())
-            assert text_iter is not None
+            en_iter = p.iter_stream("en-transcript", input_stream())
+            es_iter = p.iter_stream("es-transcript", input_stream())
+            assert en_iter is not None
+            assert es_iter is not None
 
             audio_task = asyncio.create_task(_drain_async_iter(p.process(input_stream())))
 
-            lines: list[str] = []
-            async for line in text_iter:
-                lines.append(line)
+            en_lines: list[str] = []
+            async for line in en_iter:
+                en_lines.append(line)
+
+            es_lines: list[str] = []
+            async for line in es_iter:
+                es_lines.append(line)
 
             await audio_task
 
-        assert len(lines) >= 2
-        assert any("[EN]" in line for line in lines)
-        assert any("[ES]" in line for line in lines)
+        assert len(en_lines) >= 1
+        assert len(es_lines) >= 1
+        assert all("[EN]" not in line for line in en_lines)
+        assert all("[ES]" not in line for line in es_lines)
 
     async def test_empty_stream_yields_nothing(self) -> None:
         p = SpanishTranslationPipeline()

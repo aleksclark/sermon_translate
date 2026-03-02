@@ -11,7 +11,7 @@ import {
   createTheme,
 } from "@mantine/core";
 import { IconMoon, IconSun } from "@tabler/icons-react";
-import type { Session } from "./api/index.ts";
+import type { PipelineInfo, Session } from "./api/index.ts";
 import type { AudioSource } from "./components/NewSessionModal.tsx";
 import { updateSession } from "./api/index.ts";
 import { ServerStatsPanel } from "./components/ServerStatsPanel.tsx";
@@ -29,6 +29,7 @@ const theme = createTheme({
 
 interface ActiveSession {
   session: Session;
+  pipelineInfo: PipelineInfo;
   inputDeviceId: string;
   outputDeviceId: string;
   audioSource: AudioSource;
@@ -67,15 +68,27 @@ function AppContent() {
     };
   }, [activeSession]);
 
-  const { connected, liveStats, transcript, stop } = useAudioStream(streamOptions);
+  const { connected, liveStats, transcripts, playbackDelay, stop } = useAudioStream(streamOptions);
+
+  const streamLabels = useMemo(() => {
+    if (!activeSession) return {};
+    const labels: Record<string, string> = {};
+    for (const s of activeSession.pipelineInfo.output_streams) {
+      if (s.kind === "text" && s.label) {
+        labels[s.name] = s.label;
+      }
+    }
+    return labels;
+  }, [activeSession]);
 
   const handleCreated = (
     session: Session,
+    pipelineInfo: PipelineInfo,
     inputDeviceId: string,
     outputDeviceId: string,
     audioSource: AudioSource,
   ) => {
-    setActiveSession({ session, inputDeviceId, outputDeviceId, audioSource });
+    setActiveSession({ session, pipelineInfo, inputDeviceId, outputDeviceId, audioSource });
     setSelectedId(session.id);
     refresh();
   };
@@ -125,7 +138,9 @@ function AppContent() {
                   pipelineId={activeSession.session.pipeline_id}
                   connected={connected}
                   liveStats={liveStats}
-                  transcript={transcript}
+                  transcripts={transcripts}
+                  streamLabels={streamLabels}
+                  playbackDelay={playbackDelay}
                   onStop={handleStop}
                 />
               )}

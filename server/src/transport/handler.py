@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
+from collections.abc import AsyncIterator
 
 from starlette.websockets import WebSocket
 
 from src.api.deps import get_pipeline_registry, get_server_stats, get_session_store
 from src.models import SessionStatus
+from src.pipelines.base import OutputStreamKind
 from src.transport.base import EventType, TransportEvent
 from src.transport.ws import WebSocketTransport
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_stream(ws: WebSocket, session_id: str) -> None:
@@ -30,6 +35,7 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
     await transport.start_reader()
 
     session.status = SessionStatus.ACTIVE
+    pipeline.configure_session(session)
     await pipeline.start()
     await transport.send_event(
         TransportEvent(type=EventType.SESSION_START, session_id=session_id)
@@ -39,29 +45,41 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
     start_time = time.monotonic()
 
     try:
-        async def forward_output() -> None:
-            async for chunk in pipeline.process(audio_input()):
+        audio_queues: list[asyncio.Queue[bytes | None]] = []
+
+        async def audio_input() -> None:
+            async for chunk in transport.recv_audio():
+                session.stats.bytes_received += len(chunk)
+                session.stats.chunks_received += 1
+                for q in audio_queues:
+                    await q.put(chunk)
+            for q in audio_queues:
+                await q.put(None)
+
+        async def queue_iter(q: asyncio.Queue[bytes | None]) -> AsyncIterator[bytes]:
+            while True:
+                item = await q.get()
+                if item is None:
+                    return
+                yield item
+
+        async def forward_audio(stream: AsyncIterator[bytes]) -> None:
+            async for chunk in pipeline.process(stream):
                 session.stats.bytes_sent += len(chunk)
                 session.stats.chunks_sent += 1
                 stats_tracker.total_bytes_processed += len(chunk)
                 await transport.send_audio(chunk)
 
-        async def audio_input():
-            async for chunk in transport.recv_audio():
-                session.stats.bytes_received += len(chunk)
-                session.stats.chunks_received += 1
-                yield chunk
-
-        async def forward_text() -> None:
-            text_stream = pipeline.process_text(audio_input())
-            if text_stream is None:
+        async def forward_text(name: str, stream: AsyncIterator[bytes]) -> None:
+            it = pipeline.iter_stream(name, stream)
+            if it is None:
                 return
-            async for text in text_stream:
+            async for text in it:
                 await transport.send_event(
                     TransportEvent(
                         type=EventType.PIPELINE_EVENT,
                         session_id=session_id,
-                        payload={"kind": "transcript", "text": text},
+                        payload={"kind": "transcript", "stream": name, "text": text},
                     )
                 )
 
@@ -78,17 +96,26 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
                 )
                 await asyncio.sleep(1)
 
-        from src.pipelines.base import BasePipeline
+        tasks: list[asyncio.Task | asyncio.Future] = [asyncio.ensure_future(stats_loop())]
 
-        produces_text = type(pipeline).process_text is not BasePipeline.process_text
-        produces_audio = type(pipeline).process is not BasePipeline.process
-        tasks = [stats_loop()]
-        if produces_text:
-            tasks.append(forward_text())
-        if produces_audio:
-            tasks.append(forward_output())
+        has_audio = False
+        for desc in pipeline.output_streams:
+            if desc.kind == OutputStreamKind.AUDIO and desc.name == "audio":
+                has_audio = True
+            elif desc.kind == OutputStreamKind.TEXT:
+                q: asyncio.Queue[bytes | None] = asyncio.Queue()
+                audio_queues.append(q)
+                tasks.append(asyncio.ensure_future(forward_text(desc.name, queue_iter(q))))
+
+        if has_audio:
+            q_audio: asyncio.Queue[bytes | None] = asyncio.Queue()
+            audio_queues.append(q_audio)
+            tasks.append(asyncio.ensure_future(forward_audio(queue_iter(q_audio))))
+
+        tasks.append(asyncio.ensure_future(audio_input()))
         await asyncio.gather(*tasks)
     except Exception:
+        logger.exception("stream error for session %s", session_id)
         await transport.send_event(
             TransportEvent(
                 type=EventType.ERROR,

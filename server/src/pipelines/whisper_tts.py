@@ -7,8 +7,8 @@ from functools import partial
 
 import numpy as np
 
-from src.models import PipelineInfo
-from src.pipelines.base import BasePipeline
+from src.models import OutputStreamInfo, PipelineInfo
+from src.pipelines.base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,19 @@ class WhisperTTSPipeline(BasePipeline):
             id="whisper-tts",
             name="Whisper TTS",
             description="Speech-to-text using faster-whisper — streams transcript from audio.",
+            output_streams=[
+                OutputStreamInfo(name=s.name, kind=s.kind.value, label=s.label)
+                for s in self.output_streams
+            ],
         )
+
+    @property
+    def output_streams(self) -> list[OutputStreamDescriptor]:
+        return [
+            OutputStreamDescriptor(
+                name="transcript", kind=OutputStreamKind.TEXT, label="Transcript",
+            ),
+        ]
 
     async def start(self) -> None:
         if self._model is not None:
@@ -71,7 +83,14 @@ class WhisperTTSPipeline(BasePipeline):
         return
         yield  # noqa: F841
 
-    async def process_text(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]:
+    def iter_stream(
+        self, name: str, audio_stream: AsyncIterator[bytes]
+    ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
+        if name == "transcript":
+            return self._process_text(audio_stream)
+        return None
+
+    async def _process_text(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]:
         if self._model is None:
             await self.start()
 

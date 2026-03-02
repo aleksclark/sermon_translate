@@ -5,6 +5,7 @@ import {
   Group,
   Modal,
   NativeSelect,
+  NumberInput,
   SegmentedControl,
   Stack,
   Text,
@@ -30,6 +31,7 @@ export function NewSessionModal({
   onClose: () => void;
   onCreated: (
     session: Session,
+    pipelineInfo: PipelineInfo,
     inputDeviceId: string,
     outputDeviceId: string,
     audioSource: AudioSource,
@@ -43,6 +45,7 @@ export function NewSessionModal({
   const [creating, setCreating] = useState(false);
   const [sourceType, setSourceType] = useState<AudioSourceType>("mic");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [audioContextSeconds, setAudioContextSeconds] = useState<number>(0);
   const resetRef = useRef<() => void>(null);
   const { inputs, outputs } = useAudioDevices();
 
@@ -69,6 +72,7 @@ export function NewSessionModal({
       const session = await createSession({
         pipeline_id: selectedPipeline,
         label: label || undefined,
+        audio_context_seconds: audioContextSeconds || undefined,
       });
       const source: AudioSource =
         sourceType === "file" && selectedFile
@@ -77,7 +81,7 @@ export function NewSessionModal({
       setLabel("");
       setSelectedFile(null);
       resetRef.current?.();
-      onCreated(session, inputDevice, outputDevice, source);
+      onCreated(session, selected!, inputDevice, outputDevice, source);
       onClose();
     } finally {
       setCreating(false);
@@ -153,6 +157,16 @@ export function NewSessionModal({
           }
           value={outputDevice}
           onChange={(e) => setOutputDevice(e.currentTarget.value)}
+        />
+        <NumberInput
+          label="Audio Context (seconds)"
+          description="Previous audio fed to the model for continuity (0 = none)"
+          value={audioContextSeconds}
+          onChange={(v) => setAudioContextSeconds(typeof v === "number" ? v : 0)}
+          min={0}
+          max={30}
+          step={1}
+          allowDecimal={false}
         />
         <Group justify="flex-end" mt="xs">
           <Button variant="subtle" onClick={onClose}>

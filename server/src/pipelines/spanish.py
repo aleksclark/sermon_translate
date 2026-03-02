@@ -11,8 +11,8 @@ import av
 import numpy as np
 import sentencepiece as spm
 
-from src.models import PipelineInfo
-from src.pipelines.base import BasePipeline
+from src.models import OutputStreamInfo, PipelineInfo
+from src.pipelines.base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
 from src.pipelines.whisper_tts import WHISPER_SAMPLE_RATE, _downsample, _transcribe_sync
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ async def _synthesize_spanish(text: str, target_rate: int) -> bytes:
 
 
 class SpanishTranslationPipeline(BasePipeline):
-    """English audio in → Spanish audio out, with transcript side-channel."""
+    """English audio in → Spanish audio + EN/ES transcripts out."""
 
     def __init__(self, whisper_model_size: str = "base", sample_rate: int = 48000) -> None:
         self._whisper_model_size = whisper_model_size
@@ -79,7 +79,8 @@ class SpanishTranslationPipeline(BasePipeline):
         self._translator: Any = None
         self._sp_source: Any = None
         self._sp_target: Any = None
-        self._text_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._en_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._es_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     @property
     def info(self) -> PipelineInfo:
@@ -87,7 +88,25 @@ class SpanishTranslationPipeline(BasePipeline):
             id="spanish-translation",
             name="Spanish Translation",
             description="Translates English speech to Spanish audio with transcript.",
+            output_streams=[
+                OutputStreamInfo(name=s.name, kind=s.kind.value, label=s.label)
+                for s in self.output_streams
+            ],
         )
+
+    @property
+    def output_streams(self) -> list[OutputStreamDescriptor]:
+        return [
+            OutputStreamDescriptor(
+                name="audio", kind=OutputStreamKind.AUDIO, label="Spanish Audio",
+            ),
+            OutputStreamDescriptor(
+                name="en-transcript", kind=OutputStreamKind.TEXT, label="English",
+            ),
+            OutputStreamDescriptor(
+                name="es-transcript", kind=OutputStreamKind.TEXT, label="Spanish",
+            ),
+        ]
 
     async def start(self) -> None:
         loop = asyncio.get_running_loop()
@@ -156,7 +175,8 @@ class SpanishTranslationPipeline(BasePipeline):
         self._translator = None
         self._sp_source = None
         self._sp_target = None
-        await self._text_queue.put(None)
+        await self._en_queue.put(None)
+        await self._es_queue.put(None)
 
     async def process(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
         if self._whisper_model is None or self._translator is None:
@@ -183,7 +203,8 @@ class SpanishTranslationPipeline(BasePipeline):
             async for out in self._process_segment(buffer, loop):
                 yield out
 
-        await self._text_queue.put(None)
+        await self._en_queue.put(None)
+        await self._es_queue.put(None)
 
     async def _process_segment(
         self, audio: np.ndarray, loop: asyncio.AbstractEventLoop
@@ -198,16 +219,26 @@ class SpanishTranslationPipeline(BasePipeline):
             )
             es_text = await loop.run_in_executor(None, translate_fn)
 
-            await self._text_queue.put(f"[EN] {en_text}")
-            await self._text_queue.put(f"[ES] {es_text}")
+            await self._en_queue.put(en_text)
+            await self._es_queue.put(es_text)
 
             pcm_bytes = await _synthesize_spanish(es_text, self._sample_rate)
             if pcm_bytes:
                 yield pcm_bytes
 
-    async def process_text(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]:
+    def iter_stream(
+        self, name: str, audio_stream: AsyncIterator[bytes]
+    ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
+        if name == "en-transcript":
+            return self._drain_queue(self._en_queue)
+        if name == "es-transcript":
+            return self._drain_queue(self._es_queue)
+        return None
+
+    @staticmethod
+    async def _drain_queue(q: asyncio.Queue[str | None]) -> AsyncIterator[str]:
         while True:
-            text = await self._text_queue.get()
+            text = await q.get()
             if text is None:
                 return
             yield text

@@ -15,6 +15,7 @@ class SessionStore:
             label=req.label,
             sample_rate=req.sample_rate,
             channels=req.channels,
+            audio_context_seconds=req.audio_context_seconds,
         )
         self._sessions[session.id] = session
         return session

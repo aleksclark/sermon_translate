@@ -46,7 +46,7 @@ class TestWhisperTTSPipeline:
 
         assert output == []
 
-    async def test_process_text_yields_transcription(self) -> None:
+    async def test_iter_stream_yields_transcription(self) -> None:
         p = WhisperTTSPipeline(sample_rate=16000)
         p._model = _make_mock_model(["Hello world.", "Testing."])
 
@@ -55,7 +55,7 @@ class TestWhisperTTSPipeline:
         async def input_stream() -> AsyncIterator[bytes]:
             yield chunk
 
-        text_iter = p.process_text(input_stream())
+        text_iter = p.iter_stream("transcript", input_stream())
         assert text_iter is not None
 
         lines: list[str] = []
@@ -65,7 +65,7 @@ class TestWhisperTTSPipeline:
         assert lines == ["Hello world.", "Testing."]
         p._model.transcribe.assert_called_once()
 
-    async def test_process_text_empty_stream(self) -> None:
+    async def test_iter_stream_empty_stream(self) -> None:
         p = WhisperTTSPipeline()
         p._model = _make_mock_model()
 
@@ -73,7 +73,7 @@ class TestWhisperTTSPipeline:
             return
             yield  # noqa: F841
 
-        text_iter = p.process_text(input_stream())
+        text_iter = p.iter_stream("transcript", input_stream())
         assert text_iter is not None
 
         lines: list[str] = []
@@ -82,7 +82,7 @@ class TestWhisperTTSPipeline:
 
         assert lines == []
 
-    async def test_process_text_flushes_remaining_buffer(self) -> None:
+    async def test_iter_stream_flushes_remaining_buffer(self) -> None:
         p = WhisperTTSPipeline(sample_rate=16000)
 
         call_count = 0
@@ -106,7 +106,7 @@ class TestWhisperTTSPipeline:
             yield chunk2
 
         lines: list[str] = []
-        text_iter = p.process_text(input_stream())
+        text_iter = p.iter_stream("transcript", input_stream())
         assert text_iter is not None
         async for line in text_iter:
             lines.append(line)
@@ -115,7 +115,7 @@ class TestWhisperTTSPipeline:
         assert lines[0] == "Segment 1."
         assert lines[1] == "Segment 2."
 
-    async def test_process_text_skips_empty_text(self) -> None:
+    async def test_iter_stream_skips_empty_text(self) -> None:
         p = WhisperTTSPipeline(sample_rate=16000)
         p._model = _make_mock_model(["  ", "Real text."])
 
@@ -125,7 +125,7 @@ class TestWhisperTTSPipeline:
             yield chunk
 
         lines: list[str] = []
-        text_iter = p.process_text(input_stream())
+        text_iter = p.iter_stream("transcript", input_stream())
         assert text_iter is not None
         async for line in text_iter:
             lines.append(line)
@@ -145,7 +145,7 @@ class TestWhisperTTSPipeline:
         await p.stop()
         assert p._model is None
 
-    def test_base_pipeline_process_text_returns_none(self) -> None:
+    def test_base_pipeline_iter_stream_returns_none(self) -> None:
         from src.pipelines.echo import EchoPipeline
 
         p = EchoPipeline()
@@ -154,7 +154,7 @@ class TestWhisperTTSPipeline:
             return
             yield  # noqa: F841
 
-        assert p.process_text(input_stream()) is None
+        assert p.iter_stream("anything", input_stream()) is None
 
     def test_downsample(self) -> None:
         audio = np.ones(48000, dtype=np.float32)

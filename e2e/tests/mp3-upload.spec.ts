@@ -106,7 +106,7 @@ test.describe("MP3 file upload session", () => {
     // and Whisper buffers 3s before transcribing, so ~6-10s total.
     await expect(page.getByText("Transcript", { exact: true })).toBeVisible({ timeout: 60_000 });
 
-    const transcriptArea = page.locator('[data-testid="transcript-area"]');
+    const transcriptArea = page.locator('[data-testid="transcript-transcript"]');
     await expect(transcriptArea).toContainText(/grace/i, { timeout: 60_000 });
   });
 });

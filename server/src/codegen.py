@@ -15,6 +15,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from src.models import (
+    OutputStreamInfo,
     PipelineInfo,
     ServerStats,
     Session,
@@ -26,6 +27,7 @@ from src.models import (
 
 SHARED_MODELS: list[type] = [
     SessionStatus,
+    OutputStreamInfo,
     PipelineInfo,
     SessionCreate,
     SessionUpdate,

@@ -2,10 +2,17 @@
 
 export type SessionStatus = "created" | "active" | "paused" | "closed";
 
+export interface OutputStreamInfo {
+  name: string;
+  kind: string;
+  label: string;
+}
+
 export interface PipelineInfo {
   id: string;
   name: string;
   description: string;
+  output_streams: OutputStreamInfo[];
 }
 
 export interface SessionCreate {
@@ -13,6 +20,7 @@ export interface SessionCreate {
   sample_rate?: number;
   channels?: number;
   label?: string;
+  audio_context_seconds?: number;
 }
 
 export interface SessionUpdate {
@@ -36,6 +44,7 @@ export interface Session {
   status: SessionStatus;
   sample_rate: number;
   channels: number;
+  audio_context_seconds: number;
   created_at: number;
   stats: SessionStats;
 }

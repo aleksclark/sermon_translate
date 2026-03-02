@@ -5,7 +5,7 @@ import collections
 import time
 from collections.abc import AsyncIterator
 
-from src.models import PipelineInfo
+from src.models import OutputStreamInfo, PipelineInfo
 from src.pipelines.base import BasePipeline
 
 DELAY_SECONDS = 5.0
@@ -20,6 +20,10 @@ class EchoPipeline(BasePipeline):
             id="echo",
             name="Echo (5s delay)",
             description="Echoes audio back after a 5-second delay. Useful for testing.",
+            output_streams=[
+                OutputStreamInfo(name=s.name, kind=s.kind.value, label=s.label)
+                for s in self.output_streams
+            ],
         )
 
     async def process(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:

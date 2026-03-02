@@ -4,6 +4,7 @@ import type {
   SessionCreate,
   ServerStats,
   PipelineInfo,
+  OutputStreamInfo,
   SessionStatus,
   SessionUpdate,
 } from "../api/types.gen.ts";
@@ -17,6 +18,7 @@ describe("generated types", () => {
       status: "created",
       sample_rate: 48000,
       channels: 1,
+      audio_context_seconds: 0,
       created_at: Date.now(),
       stats: {
         bytes_received: 0,
@@ -55,8 +57,20 @@ describe("generated types", () => {
   });
 
   it("PipelineInfo has required fields", () => {
-    const p: PipelineInfo = { id: "echo", name: "Echo", description: "test" };
+    const p: PipelineInfo = {
+      id: "echo",
+      name: "Echo",
+      description: "test",
+      output_streams: [],
+    };
     expect(p.id).toBe("echo");
+    expect(p.output_streams).toEqual([]);
+  });
+
+  it("OutputStreamInfo has required fields", () => {
+    const s: OutputStreamInfo = { name: "transcript", kind: "text", label: "Transcript" };
+    expect(s.name).toBe("transcript");
+    expect(s.kind).toBe("text");
   });
 
   it("SessionStatus union accepts valid values", () => {

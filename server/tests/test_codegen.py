@@ -13,6 +13,7 @@ class TestCodegen:
         ts = generate_typescript()
         for name in [
             "SessionStatus",
+            "OutputStreamInfo",
             "PipelineInfo",
             "SessionCreate",
             "SessionUpdate",

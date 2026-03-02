@@ -14,10 +14,17 @@ class SessionStatus(StrEnum):
     CLOSED = "closed"
 
 
+class OutputStreamInfo(BaseModel):
+    name: str
+    kind: str
+    label: str = ""
+
+
 class PipelineInfo(BaseModel):
     id: str
     name: str
     description: str
+    output_streams: list[OutputStreamInfo] = Field(default_factory=list)
 
 
 class SessionCreate(BaseModel):
@@ -25,6 +32,7 @@ class SessionCreate(BaseModel):
     sample_rate: int = 48000
     channels: int = 1
     label: str = ""
+    audio_context_seconds: float = 0.0
 
 
 class SessionUpdate(BaseModel):
@@ -48,5 +56,6 @@ class Session(BaseModel):
     status: SessionStatus = SessionStatus.CREATED
     sample_rate: int = 48000
     channels: int = 1
+    audio_context_seconds: float = 0.0
     created_at: float = Field(default_factory=time.time)
     stats: SessionStats = Field(default_factory=SessionStats)
