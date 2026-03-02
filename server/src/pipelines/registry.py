@@ -3,6 +3,7 @@ from __future__ import annotations
 from src.models import PipelineInfo
 from src.pipelines.base import BasePipeline
 from src.pipelines.echo import EchoPipeline
+from src.pipelines.whisper_tts import WhisperTTSPipeline
 
 
 class PipelineRegistry:
@@ -27,4 +28,5 @@ class PipelineRegistry:
 def create_default_registry() -> PipelineRegistry:
     registry = PipelineRegistry()
     registry.register(EchoPipeline())
+    registry.register(WhisperTTSPipeline())
     return registry

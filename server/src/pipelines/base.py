@@ -23,3 +23,10 @@ class BasePipeline(abc.ABC):
 
     async def stop(self) -> None:  # noqa: B027
         """Called when a session using this pipeline stops."""
+
+    def process_text(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str] | None:  # noqa: B027
+        """Accept an async stream of audio chunks and yield transcript strings.
+
+        Return None (the default) if this pipeline does not produce text.
+        """
+        return None

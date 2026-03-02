@@ -64,7 +64,7 @@ function AppContent() {
     };
   }, [activeSession]);
 
-  const { connected, liveStats, stop } = useAudioStream(streamOptions);
+  const { connected, liveStats, transcript, stop } = useAudioStream(streamOptions);
 
   const handleCreated = (session: Session, inputDeviceId: string, outputDeviceId: string) => {
     setActiveSession({ session, inputDeviceId, outputDeviceId });
@@ -117,6 +117,7 @@ function AppContent() {
                   pipelineId={activeSession.session.pipeline_id}
                   connected={connected}
                   liveStats={liveStats}
+                  transcript={transcript}
                   onStop={handleStop}
                 />
               )}

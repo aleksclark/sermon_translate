@@ -34,5 +34,6 @@ class TestPipelineRegistry:
 
     def test_default_registry(self) -> None:
         reg = create_default_registry()
-        assert len(reg) >= 1
+        assert len(reg) >= 2
         assert reg.get("echo") is not None
+        assert reg.get("whisper-tts") is not None

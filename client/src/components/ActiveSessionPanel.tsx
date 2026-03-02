@@ -1,4 +1,5 @@
-import { Badge, Button, Card, Group, Stack, Text } from "@mantine/core";
+import { useEffect, useRef } from "react";
+import { Badge, Button, Card, Group, ScrollArea, Stack, Text } from "@mantine/core";
 import type { SessionStats } from "../api/index.ts";
 
 function bytes(n: number): string {
@@ -12,14 +13,22 @@ export function ActiveSessionPanel({
   pipelineId,
   connected,
   liveStats,
+  transcript,
   onStop,
 }: {
   sessionId: string;
   pipelineId: string;
   connected: boolean;
   liveStats: SessionStats | null;
+  transcript: string[];
   onStop: () => void;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [transcript.length]);
+
   return (
     <Card withBorder p="md">
       <Group justify="space-between" mb="sm">
@@ -48,6 +57,23 @@ export function ActiveSessionPanel({
             <Text size="sm">
               Pipeline Latency: {liveStats.pipeline_latency_ms.toFixed(0)}ms
             </Text>
+          </>
+        )}
+
+        {transcript.length > 0 && (
+          <>
+            <Text fw={500} size="sm" mt="xs">
+              Transcript
+            </Text>
+            <ScrollArea h={200} viewportRef={scrollRef} offsetScrollbars>
+              <Stack gap={4}>
+                {transcript.map((line, i) => (
+                  <Text key={i} size="sm" c="dimmed">
+                    {line}
+                  </Text>
+                ))}
+              </Stack>
+            </ScrollArea>
           </>
         )}
 

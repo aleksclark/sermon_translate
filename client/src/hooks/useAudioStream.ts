@@ -14,6 +14,7 @@ interface AudioStreamOptions {
 export function useAudioStream(options: AudioStreamOptions | null) {
   const [connected, setConnected] = useState(false);
   const [liveStats, setLiveStats] = useState<SessionStats | null>(null);
+  const [transcript, setTranscript] = useState<string[]>([]);
   const transportRef = useRef<StreamTransport | null>(null);
   const contextRef = useRef<AudioContext | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -27,6 +28,7 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     contextRef.current = null;
     setConnected(false);
     setLiveStats(null);
+    setTranscript([]);
   }, []);
 
   useEffect(() => {
@@ -112,6 +114,8 @@ export function useAudioStream(options: AudioStreamOptions | null) {
       transport.onEvent((evt: TransportEvent) => {
         if (evt.type === "session.stats") {
           setLiveStats(evt.payload as unknown as SessionStats);
+        } else if (evt.type === "pipeline.event" && evt.payload.kind === "transcript") {
+          setTranscript((prev) => [...prev, evt.payload.text as string]);
         }
       });
 
@@ -127,5 +131,5 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     };
   }, [options?.sessionId]);
 
-  return { connected, liveStats, stop };
+  return { connected, liveStats, transcript, stop };
 }

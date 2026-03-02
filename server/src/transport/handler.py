@@ -52,6 +52,19 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
                 session.stats.chunks_received += 1
                 yield chunk
 
+        async def forward_text() -> None:
+            text_stream = pipeline.process_text(audio_input())
+            if text_stream is None:
+                return
+            async for text in text_stream:
+                await transport.send_event(
+                    TransportEvent(
+                        type=EventType.PIPELINE_EVENT,
+                        session_id=session_id,
+                        payload={"kind": "transcript", "text": text},
+                    )
+                )
+
         async def stats_loop() -> None:
             while session.status == SessionStatus.ACTIVE:
                 session.stats.duration_seconds = round(time.monotonic() - start_time, 1)
@@ -65,7 +78,15 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
                 )
                 await asyncio.sleep(1)
 
-        await asyncio.gather(forward_output(), stats_loop())
+        from src.pipelines.base import BasePipeline
+
+        produces_text = type(pipeline).process_text is not BasePipeline.process_text
+        tasks = [stats_loop()]
+        if produces_text:
+            tasks.append(forward_text())
+        else:
+            tasks.append(forward_output())
+        await asyncio.gather(*tasks)
     except Exception:
         await transport.send_event(
             TransportEvent(
