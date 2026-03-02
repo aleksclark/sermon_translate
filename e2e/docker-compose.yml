@@ -1,0 +1,31 @@
+services:
+  server:
+    build:
+      context: ../server
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/stats')"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  web:
+    image: nginx:alpine
+    volumes:
+      - ../client/dist:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "4173:80"
+    depends_on:
+      server:
+        condition: service_healthy
+
+  playwright:
+    build:
+      context: .
+    depends_on:
+      web:
+        condition: service_started
+    environment:
+      - BASE_URL=http://web:80
+    volumes:
+      - ./results:/app/results

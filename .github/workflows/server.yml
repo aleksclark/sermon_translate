@@ -1,0 +1,39 @@
+name: Server CI
+
+on:
+  push:
+    branches: [master]
+    paths: [server/**, .github/workflows/server.yml]
+  pull_request:
+    branches: [master]
+    paths: [server/**, .github/workflows/server.yml]
+
+defaults:
+  run:
+    working-directory: server
+
+jobs:
+  lint-typecheck-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check src/ tests/
+
+      - name: Typecheck
+        run: uv run pyright src/
+
+      - name: Test
+        run: uv run pytest --tb=short
