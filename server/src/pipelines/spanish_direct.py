@@ -29,26 +29,38 @@ MIN_BUFFER_SECONDS = 1.0
 async def _synthesize_spanish(text: str, target_rate: int) -> bytes:
     import edge_tts
 
-    communicate = edge_tts.Communicate(text, voice=EDGE_TTS_VOICE)
-    mp3_data = b""
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            mp3_data += chunk.get("data", b"")
+    if not text or not text.strip():
+        return b""
+
+    try:
+        communicate = edge_tts.Communicate(text, voice=EDGE_TTS_VOICE)
+        mp3_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                mp3_data += chunk.get("data", b"")
+    except Exception:
+        logger.exception("edge-tts failed for text: %r", text[:80])
+        return b""
 
     if not mp3_data:
         return b""
 
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(
-        None, _decode_mp3_to_pcm, mp3_data, target_rate
-    )
+    try:
+        return await loop.run_in_executor(
+            None, _decode_mp3_to_pcm, mp3_data, target_rate
+        )
+    except Exception:
+        logger.exception("MP3 decode failed")
+        return b""
 
 
-def _translate_audio_sync(
+def _generate_tokens(
     processor: Any,
     model: Any,
     audio: np.ndarray,
-) -> str:
+) -> list[int]:
+    """Run SeamlessM4T generate and return the raw token list."""
     import torch
 
     inputs = processor(
@@ -57,18 +69,21 @@ def _translate_audio_sync(
         return_tensors="pt",
         sampling_rate=SEAMLESS_SAMPLE_RATE,
     )
+    kwargs: dict[str, Any] = {
+        **inputs,
+        "tgt_lang": "spa",
+        "generate_speech": False,
+    }
     with torch.no_grad():
-        output = model.generate(
-            **inputs,
-            tgt_lang="spa",
-            generate_speech=False,
-        )
+        output = model.generate(**kwargs)
     sequences = output[0] if isinstance(output, (tuple, list)) else output
     if hasattr(sequences, "sequences"):
         sequences = sequences.sequences
-    token_list = sequences[0].tolist()
-    logger.debug("generate tokens: %s", token_list)
+    return sequences[0].tolist()
 
+
+def _decode_tokens(processor: Any, token_list: list[int]) -> str:
+    """Decode a token list into text, filtering special/out-of-vocab IDs."""
     tok = processor.tokenizer
     special_ids = set(tok.all_special_ids)
     sp_limit = tok.sp_model.get_piece_size() + tok.fairseq_offset
@@ -77,35 +92,19 @@ def _translate_audio_sync(
         if t not in special_ids and t < sp_limit
     ]
     text: str = tok.decode(filtered, skip_special_tokens=False)
-    logger.debug("decoded: %r", text[:200])
     return text.strip()
 
 
-def _translate_with_context_sync(
+def _translate_audio_sync(
     processor: Any,
     model: Any,
-    context_audio: np.ndarray,
-    full_audio: np.ndarray,
+    audio: np.ndarray,
 ) -> str:
-    if len(context_audio) == 0:
-        return _translate_audio_sync(processor, model, full_audio)
-
-    full_text = _translate_audio_sync(processor, model, full_audio)
-
-    context_text = _translate_audio_sync(processor, model, context_audio)
-
-    if full_text.startswith(context_text):
-        new_text = full_text[len(context_text):].strip()
-        if new_text:
-            return new_text
-
-    if context_text and context_text in full_text:
-        idx = full_text.index(context_text) + len(context_text)
-        new_text = full_text[idx:].strip()
-        if new_text:
-            return new_text
-
-    return full_text
+    token_list = _generate_tokens(processor, model, audio)
+    logger.debug("generate tokens: %s", token_list)
+    text = _decode_tokens(processor, token_list)
+    logger.debug("decoded: %r", text[:200])
+    return text
 
 
 class SpanishDirectPipeline(BasePipeline):
@@ -242,8 +241,9 @@ class SpanishDirectPipeline(BasePipeline):
         loop = asyncio.get_running_loop()
 
         logger.info(
-            "process() started: sample_rate=%d, buffer_s=%d, need=%d",
+            "process() started: sample_rate=%d, buffer_s=%d, need=%d, ctx_s=%.1f",
             self._sample_rate, BUFFER_SECONDS, samples_needed,
+            self._audio_context_seconds,
         )
 
         async for chunk in audio_stream:
@@ -289,34 +289,26 @@ class SpanishDirectPipeline(BasePipeline):
         context_samples: int,
         loop: asyncio.AbstractEventLoop,
     ) -> AsyncIterator[bytes]:
-        if context_samples > 0 and len(context) > 0:
-            full_audio = np.concatenate([context, segment])
-            es_text = await loop.run_in_executor(
-                None,
-                _translate_with_context_sync,
-                self._processor,
-                self._model,
-                context,
-                full_audio,
-            )
-        else:
-            es_text = await loop.run_in_executor(
-                None,
-                _translate_audio_sync,
-                self._processor,
-                self._model,
-                segment,
-            )
+        use_context = context_samples > 0 and len(context) > 0
+        full_audio = np.concatenate([context, segment]) if use_context else segment
+
+        es_text = await loop.run_in_executor(
+            None,
+            _translate_audio_sync,
+            self._processor,
+            self._model,
+            full_audio,
+        )
 
         logger.info("segment translated: %r", es_text[:120] if es_text else "")
-        if es_text:
-            await self._es_queue.put(es_text)
-            pcm_bytes = await _synthesize_spanish(
-                es_text, self._sample_rate
-            )
-            logger.info("TTS produced %d bytes", len(pcm_bytes))
-            if pcm_bytes:
-                yield pcm_bytes
+        if not es_text:
+            return
+
+        await self._es_queue.put(es_text)
+        pcm_bytes = await _synthesize_spanish(es_text, self._sample_rate)
+        logger.info("TTS produced %d bytes", len(pcm_bytes))
+        if pcm_bytes:
+            yield pcm_bytes
 
     @staticmethod
     def _update_context(

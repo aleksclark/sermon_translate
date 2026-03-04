@@ -1,11 +1,12 @@
 from .base import EventType, TransportConnection, TransportEvent
-from .handler import handle_stream
-from .ws import WebSocketTransport
+from .handler import run_session
+from .rtc import OutputAudioTrack, WebRTCTransport
 
 __all__ = [
     "EventType",
+    "OutputAudioTrack",
     "TransportConnection",
     "TransportEvent",
-    "WebSocketTransport",
-    "handle_stream",
+    "WebRTCTransport",
+    "run_session",
 ]

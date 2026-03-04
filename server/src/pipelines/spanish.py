@@ -56,17 +56,28 @@ def _decode_mp3_to_pcm(mp3_data: bytes, target_rate: int) -> bytes:
 async def _synthesize_spanish(text: str, target_rate: int) -> bytes:
     import edge_tts
 
-    communicate = edge_tts.Communicate(text, voice=EDGE_TTS_VOICE)
-    mp3_data = b""
-    async for chunk in communicate.stream():
-        if chunk["type"] == "audio":
-            mp3_data += chunk.get("data", b"")
+    if not text or not text.strip():
+        return b""
+
+    try:
+        communicate = edge_tts.Communicate(text, voice=EDGE_TTS_VOICE)
+        mp3_data = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                mp3_data += chunk.get("data", b"")
+    except Exception:
+        logger.exception("edge-tts failed for text: %r", text[:80])
+        return b""
 
     if not mp3_data:
         return b""
 
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _decode_mp3_to_pcm, mp3_data, target_rate)
+    try:
+        return await loop.run_in_executor(None, _decode_mp3_to_pcm, mp3_data, target_rate)
+    except Exception:
+        logger.exception("MP3 decode failed")
+        return b""
 
 
 class SpanishTranslationPipeline(BasePipeline):

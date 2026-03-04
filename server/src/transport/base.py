@@ -12,6 +12,7 @@ class EventType(StrEnum):
     SESSION_STOP = "session.stop"
     SESSION_STATS = "session.stats"
     PIPELINE_EVENT = "pipeline.event"
+    AUDIO_END = "audio.end"
     ERROR = "error"
 
 
@@ -43,6 +44,11 @@ class TransportConnection(abc.ABC):
     @abc.abstractmethod
     def recv_event(self) -> AsyncIterator[TransportEvent]:
         """Yield events from the client."""
+        ...
+
+    @abc.abstractmethod
+    async def wait_ready(self) -> None:
+        """Wait until the transport is fully connected."""
         ...
 
     @abc.abstractmethod

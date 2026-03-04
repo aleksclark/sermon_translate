@@ -10,16 +10,16 @@ test.describe("MP3 file upload session", () => {
     test.setTimeout(120_000);
 
     // Read pre-decoded PCM fixture (Int16LE 48kHz mono) as base64.
-    // This is ~370KB base64 vs ~1.6MB JSON array of floats.
     const pcmBase64 = fs.readFileSync(FIXTURE_PCM).toString("base64");
     const sampleCount = fs.statSync(FIXTURE_PCM).size / 2;
 
-    // Monkey-patch AudioContext.decodeAudioData and OfflineAudioContext
-    // so they work in headless Chrome (which cannot decode MP3 audio).
-    // The pre-decoded PCM data is injected directly.
+    // Monkey-patch AudioContext.decodeAudioData so it works in headless
+    // Chrome (which cannot decode MP3 audio). The pre-decoded PCM data
+    // is injected directly. The app uses createBufferSource →
+    // createMediaStreamDestination → WebRTC addTrack, all of which work
+    // natively in headless Chromium.
     await page.addInitScript(
       ({ b64, count }: { b64: string; count: number }) => {
-        // Decode base64 → Int16 → Float32
         const raw = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
         const i16 = new Int16Array(raw.buffer);
         const pcmData = new Float32Array(count);
@@ -37,38 +37,6 @@ test.describe("MP3 file upload session", () => {
           if (successCb) successCb(buf);
           return Promise.resolve(buf);
         };
-
-        // OfflineAudioContext.startRendering may also fail in headless mode.
-        // Patch it to pass the source buffer through without real rendering.
-        const OrigOffline = globalThis.OfflineAudioContext;
-        class MockOfflineAudioContext extends OrigOffline {
-          private _srcBuf: AudioBuffer | null = null;
-
-          createBufferSource(): AudioBufferSourceNode {
-            const node = super.createBufferSource();
-            const desc = Object.getOwnPropertyDescriptor(
-              AudioBufferSourceNode.prototype,
-              "buffer",
-            );
-            const ctx = this;
-            Object.defineProperty(node, "buffer", {
-              get() {
-                return desc?.get?.call(this) ?? null;
-              },
-              set(val: AudioBuffer | null) {
-                ctx._srcBuf = val;
-                desc?.set?.call(this, val);
-              },
-            });
-            return node;
-          }
-
-          startRendering(): Promise<AudioBuffer> {
-            if (this._srcBuf) return Promise.resolve(this._srcBuf);
-            return super.startRendering();
-          }
-        }
-        globalThis.OfflineAudioContext = MockOfflineAudioContext as typeof OfflineAudioContext;
       },
       { b64: pcmBase64, count: sampleCount },
     );
@@ -98,9 +66,9 @@ test.describe("MP3 file upload session", () => {
     // Start the session
     await page.locator('button:has-text("Start Session")').click();
 
-    // Wait for active session and WebSocket connection
+    // Wait for active session and WebRTC connection
     await expect(page.getByText("Active Session")).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText("Streaming")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Streaming")).toBeVisible({ timeout: 15_000 });
 
     // Wait for transcript — the file is 2.88s streamed at real-time pace,
     // and Whisper buffers 3s before transcribing, so ~6-10s total.

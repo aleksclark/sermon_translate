@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionStats } from "../api/index.ts";
 import type { AudioSource } from "../components/NewSessionModal.tsx";
-import type { StreamTransport, TransportEvent } from "../transport/index.ts";
-import { WebSocketTransport } from "../transport/index.ts";
+import type { TransportEvent } from "../transport/index.ts";
+import { WebRTCTransport } from "../transport/index.ts";
 
 interface AudioStreamOptions {
   sessionId: string;
@@ -19,57 +19,36 @@ export interface TranscriptLine {
   timestamp: number;
 }
 
-const CHUNK_SIZE = 4096;
-
-function floatToInt16(pcm: Float32Array): Int16Array {
-  const i16 = new Int16Array(pcm.length);
-  for (let i = 0; i < pcm.length; i++) {
-    const s = Math.max(-1, Math.min(1, pcm[i]));
-    i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-  }
-  return i16;
+interface FileMediaStreamResult {
+  stream: MediaStream;
+  durationMs: number;
 }
 
-async function streamFileAudio(
-  file: File,
-  sampleRate: number,
-  transport: StreamTransport,
-  audioCtx: AudioContext,
-  cancelledRef: { current: boolean },
-): Promise<void> {
+async function createFileMediaStream(file: File, sampleRate: number): Promise<FileMediaStreamResult> {
+  const audioCtx = new AudioContext({ sampleRate });
+  await audioCtx.resume();
   const arrayBuffer = await file.arrayBuffer();
   const decoded = await audioCtx.decodeAudioData(arrayBuffer);
 
-  const offlineCtx = new OfflineAudioContext(1, Math.ceil(decoded.duration * sampleRate), sampleRate);
-  const src = offlineCtx.createBufferSource();
-  src.buffer = decoded;
-  src.connect(offlineCtx.destination);
-  src.start();
-  const rendered = await offlineCtx.startRendering();
+  const source = audioCtx.createBufferSource();
+  source.buffer = decoded;
+  const dest = audioCtx.createMediaStreamDestination();
+  source.connect(dest);
+  source.start();
 
-  const pcm = rendered.getChannelData(0);
-  const chunkDurationMs = (CHUNK_SIZE / sampleRate) * 1000;
+  source.onended = () => {
+    dest.stream.getTracks().forEach((t) => t.stop());
+  };
 
-  for (let offset = 0; offset < pcm.length; offset += CHUNK_SIZE) {
-    if (cancelledRef.current) return;
-    const end = Math.min(offset + CHUNK_SIZE, pcm.length);
-    const chunk = pcm.subarray(offset, end);
-    const i16 = floatToInt16(chunk);
-    transport.sendAudio(i16.buffer as ArrayBuffer);
-    await new Promise((r) => setTimeout(r, chunkDurationMs));
-  }
-
-  if (!cancelledRef.current) {
-    transport.sendAudio(new ArrayBuffer(0));
-  }
+  return { stream: dest.stream, durationMs: decoded.duration * 1000 };
 }
 
 export function useAudioStream(options: AudioStreamOptions | null) {
   const [connected, setConnected] = useState(false);
+  const [muted, setMuted] = useState(false);
   const [liveStats, setLiveStats] = useState<SessionStats | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, TranscriptLine[]>>({});
-  const transportRef = useRef<StreamTransport | null>(null);
-  const contextRef = useRef<AudioContext | null>(null);
+  const transportRef = useRef<WebRTCTransport | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cancelledRef = useRef(false);
 
@@ -84,11 +63,18 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     transportRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
-    contextRef.current?.close();
-    contextRef.current = null;
     setConnected(false);
+    setMuted(false);
     setLiveStats(null);
     setTranscripts({});
+  }, []);
+
+  const toggleMute = useCallback(() => {
+    setMuted((prev) => {
+      const next = !prev;
+      transportRef.current?.setMuted(next);
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -96,15 +82,42 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     cancelledRef.current = false;
 
     async function start() {
-      const { sessionId, sampleRate, audioSource, inputDeviceId, outputDeviceId } = options!;
+      const { sessionId, sampleRate, channels, audioSource, inputDeviceId, outputDeviceId } =
+        options!;
 
-      const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${wsProto}//${location.host}/ws/stream/${sessionId}`;
-      const transport = new WebSocketTransport(wsUrl);
+      let inputStream: MediaStream;
+      let fileDurationMs: number | null = null;
 
+      if (audioSource.type === "mic") {
+        inputStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            deviceId: inputDeviceId ? { exact: inputDeviceId } : undefined,
+            sampleRate: { ideal: sampleRate },
+            channelCount: { ideal: channels },
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        });
+      } else if (audioSource.type === "file" && audioSource.file) {
+        const result = await createFileMediaStream(audioSource.file, sampleRate);
+        inputStream = result.stream;
+        fileDurationMs = result.durationMs;
+      } else {
+        return;
+      }
+
+      if (cancelledRef.current) {
+        inputStream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      streamRef.current = inputStream;
+
+      const transport = new WebRTCTransport(sessionId, inputStream, outputDeviceId);
       try {
         await transport.connect();
       } catch {
+        inputStream.getTracks().forEach((t) => t.stop());
         return;
       }
       if (cancelledRef.current) {
@@ -115,59 +128,23 @@ export function useAudioStream(options: AudioStreamOptions | null) {
       transportRef.current = transport;
       setConnected(true);
 
-      const audioCtx = new AudioContext({ sampleRate });
-      contextRef.current = audioCtx;
-
-      if (audioSource.type === "mic") {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            deviceId: inputDeviceId ? { exact: inputDeviceId } : undefined,
-            sampleRate: { ideal: sampleRate },
-            channelCount: { ideal: options!.channels },
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-          },
-        });
-        if (cancelledRef.current) {
-          stream.getTracks().forEach((t) => t.stop());
-          transport.close();
-          return;
-        }
-        streamRef.current = stream;
-
-        const source = audioCtx.createMediaStreamSource(stream);
-        const processor = audioCtx.createScriptProcessor(CHUNK_SIZE, 1, 1);
-        processor.onaudioprocess = (e: AudioProcessingEvent) => {
-          const pcm = e.inputBuffer.getChannelData(0);
-          transport.sendAudio(floatToInt16(pcm).buffer as ArrayBuffer);
+      if (audioSource.type === "file" && fileDurationMs != null) {
+        const track = inputStream.getAudioTracks()[0];
+        let audioEndSent = false;
+        const sendAudioEnd = () => {
+          if (audioEndSent) return;
+          audioEndSent = true;
+          transport.sendEvent({
+            type: "audio.end",
+            session_id: sessionId,
+            payload: {},
+          });
         };
-        source.connect(processor);
-        processor.connect(audioCtx.destination);
-      } else if (audioSource.type === "file" && audioSource.file) {
-        streamFileAudio(audioSource.file, sampleRate, transport, audioCtx, cancelledRef);
+        if (track) {
+          track.addEventListener("ended", sendAudioEnd);
+        }
+        setTimeout(sendAudioEnd, fileDurationMs + 500);
       }
-
-      transport.onAudio((buf: ArrayBuffer) => {
-        const i16 = new Int16Array(buf);
-        const f32 = new Float32Array(i16.length);
-        for (let i = 0; i < i16.length; i++) {
-          f32[i] = i16[i] / (i16[i] < 0 ? 0x8000 : 0x7fff);
-        }
-        const abuf = audioCtx.createBuffer(1, f32.length, sampleRate);
-        abuf.copyToChannel(f32, 0);
-        const src = audioCtx.createBufferSource();
-        src.buffer = abuf;
-
-        if (outputDeviceId && "setSinkId" in audioCtx) {
-          (audioCtx as unknown as { setSinkId: (id: string) => Promise<void> })
-            .setSinkId(outputDeviceId)
-            .catch(() => {});
-        }
-
-        src.connect(audioCtx.destination);
-        src.start();
-      });
 
       transport.onEvent((evt: TransportEvent) => {
         if (evt.type === "session.stats") {
@@ -195,5 +172,5 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     };
   }, [options?.sessionId]);
 
-  return { connected, liveStats, transcripts, stop };
+  return { connected, muted, liveStats, transcripts, stop, toggleMute };
 }

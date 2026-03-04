@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { Badge, Button, Card, Group, ScrollArea, Stack, Text, Title } from "@mantine/core";
+import { ActionIcon, Badge, Button, Card, Group, ScrollArea, Stack, Text, Title, Tooltip } from "@mantine/core";
+import { IconVolume, IconVolumeOff } from "@tabler/icons-react";
 import type { SessionStats } from "../api/index.ts";
 import type { TranscriptLine } from "../hooks/useAudioStream.ts";
 
@@ -46,18 +47,22 @@ export function ActiveSessionPanel({
   sessionId,
   pipelineId,
   connected,
+  muted,
   liveStats,
   transcripts,
   streamLabels,
   onStop,
+  onToggleMute,
 }: {
   sessionId: string;
   pipelineId: string;
   connected: boolean;
+  muted: boolean;
   liveStats: SessionStats | null;
   transcripts: Record<string, TranscriptLine[]>;
   streamLabels: Record<string, string>;
   onStop: () => void;
+  onToggleMute: () => void;
 }) {
   const streamNames = Object.keys(transcripts);
 
@@ -110,6 +115,17 @@ export function ActiveSessionPanel({
         )}
 
         <Group justify="flex-end" mt="xs">
+          <Tooltip label={muted ? "Unmute" : "Mute"}>
+            <ActionIcon
+              variant="light"
+              color={muted ? "red" : "gray"}
+              size="lg"
+              onClick={onToggleMute}
+              aria-label={muted ? "Unmute audio" : "Mute audio"}
+            >
+              {muted ? <IconVolumeOff size={20} /> : <IconVolume size={20} />}
+            </ActionIcon>
+          </Tooltip>
           <Button color="red" variant="outline" onClick={onStop}>
             Stop
           </Button>

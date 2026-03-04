@@ -5,13 +5,11 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.websockets import WebSocket
 
 from src.api import SessionStore, init_deps
 from src.api import router as api_router
 from src.models import ServerStatsTracker
 from src.pipelines import create_default_registry
-from src.transport import handle_stream
 
 LOG_FILE = Path(__file__).resolve().parent.parent.parent / "server.log"
 
@@ -54,10 +52,6 @@ def create_app() -> FastAPI:
     init_deps(store, registry, stats)
 
     app.include_router(api_router)
-
-    @app.websocket("/ws/stream/{session_id}")
-    async def ws_stream(ws: WebSocket, session_id: str) -> None:
-        await handle_stream(ws, session_id)
 
     return app
 

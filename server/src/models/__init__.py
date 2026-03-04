@@ -1,6 +1,7 @@
 from .session import (
     OutputStreamInfo,
     PipelineInfo,
+    RTCOffer,
     Session,
     SessionCreate,
     SessionStats,
@@ -12,6 +13,7 @@ from .stats import ServerStats, ServerStatsTracker
 __all__ = [
     "OutputStreamInfo",
     "PipelineInfo",
+    "RTCOffer",
     "ServerStats",
     "ServerStatsTracker",
     "Session",

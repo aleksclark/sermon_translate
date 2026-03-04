@@ -40,6 +40,11 @@ class SessionUpdate(BaseModel):
     status: SessionStatus | None = None
 
 
+class RTCOffer(BaseModel):
+    sdp: str
+    type: str
+
+
 class SessionStats(BaseModel):
     bytes_received: int = 0
     bytes_sent: int = 0

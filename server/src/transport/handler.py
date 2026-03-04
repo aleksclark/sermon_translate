@@ -5,34 +5,34 @@ import logging
 import time
 from collections.abc import AsyncIterator
 
-from starlette.websockets import WebSocket
-
 from src.api.deps import get_pipeline_registry, get_server_stats, get_session_store
 from src.models import SessionStatus
 from src.pipelines.base import OutputStreamKind
-from src.transport.base import EventType, TransportEvent
-from src.transport.ws import WebSocketTransport
+from src.transport.base import EventType, TransportConnection, TransportEvent
 
 logger = logging.getLogger(__name__)
 
 
-async def handle_stream(ws: WebSocket, session_id: str) -> None:
-    """Main entrypoint wired to the WS route."""
+async def run_session(transport: TransportConnection, session_id: str) -> None:
+    """Transport-agnostic session lifecycle."""
     store = get_session_store()
     session = store.get(session_id)
     if session is None:
-        await ws.close(code=4004, reason="Session not found")
+        await transport.close()
         return
 
     registry = get_pipeline_registry()
     pipeline = registry.get(session.pipeline_id)
     if pipeline is None:
-        await ws.close(code=4004, reason="Pipeline not found")
+        await transport.close()
         return
 
-    await ws.accept()
-    transport = WebSocketTransport(ws)
-    await transport.start_reader()
+    try:
+        await transport.wait_ready()
+    except TimeoutError:
+        logger.error("transport not ready for session %s", session_id)
+        await transport.close()
+        return
 
     session.status = SessionStatus.ACTIVE
     pipeline.configure_session(session)
@@ -58,6 +58,7 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
                     await q.put(chunk)
             for q in audio_queues:
                 await q.put(None)
+            stop_event.set()
 
         async def queue_iter(q: asyncio.Queue[bytes | None]) -> AsyncIterator[bytes]:
             while True:
@@ -67,34 +68,19 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
                 yield item
 
         async def forward_audio(stream: AsyncIterator[bytes]) -> None:
-            next_play = time.monotonic()
             async for chunk in pipeline.process(stream):
                 if stop_event.is_set():
                     break
                 session.stats.bytes_sent += len(chunk)
                 session.stats.chunks_sent += 1
                 stats_tracker.total_bytes_processed += len(chunk)
-
-                now = time.monotonic()
-                next_play = max(now, next_play)
-                delay = next_play - now
-                if delay > 0:
-                    await asyncio.sleep(delay)
                 await transport.send_audio(chunk)
-
-                duration = len(chunk) / (session.sample_rate * 2)
-                next_play += duration
-                session.stats.audio_delay_seconds = round(
-                    max(0.0, next_play - time.monotonic()), 1
-                )
 
         async def forward_text(name: str, stream: AsyncIterator[bytes]) -> None:
             it = pipeline.iter_stream(name, stream)
             if it is None:
                 return
             async for text in it:
-                if stop_event.is_set():
-                    break
                 await transport.send_event(
                     TransportEvent(
                         type=EventType.PIPELINE_EVENT,
@@ -121,6 +107,11 @@ async def handle_stream(ws: WebSocket, session_id: str) -> None:
                 if evt.type == EventType.SESSION_STOP:
                     logger.info("client requested stop for session %s", session_id)
                     stop_event.set()
+                    for q in audio_queues:
+                        await q.put(None)
+                    return
+                if evt.type == EventType.AUDIO_END:
+                    logger.info("client audio ended for session %s", session_id)
                     for q in audio_queues:
                         await q.put(None)
                     return

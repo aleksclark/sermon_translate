@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 from src.models import PipelineInfo
 from src.pipelines.base import BasePipeline
 from src.pipelines.echo import EchoPipeline
 from src.pipelines.spanish import SpanishTranslationPipeline
 from src.pipelines.spanish_direct import SpanishDirectPipeline
 from src.pipelines.whisper_tts import WhisperTTSPipeline
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineRegistry:
@@ -33,4 +37,10 @@ def create_default_registry() -> PipelineRegistry:
     registry.register(WhisperTTSPipeline())
     registry.register(SpanishTranslationPipeline())
     registry.register(SpanishDirectPipeline())
+    try:
+        from src.pipelines.seamless_streaming import SeamlessStreamingPipeline
+
+        registry.register(SeamlessStreamingPipeline())
+    except ImportError:
+        logger.info("seamless_communication not installed, skipping SeamlessStreamingPipeline")
     return registry

@@ -9,7 +9,7 @@ import numpy as np
 from src.models import Session
 from src.pipelines.spanish_direct import (
     SpanishDirectPipeline,
-    _translate_with_context_sync,
+    _decode_tokens,
 )
 
 
@@ -195,77 +195,78 @@ class TestSpanishDirectPipeline:
         result = SpanishDirectPipeline._update_context(context, segment, 0)
         assert len(result) == 0
 
+    async def test_context_audio_fed_to_model(self) -> None:
+        """When context is enabled, context+segment audio is concatenated for the model."""
+        p = SpanishDirectPipeline(sample_rate=16000)
+        processor, model = _make_mock_processor_and_model()
+        p._processor = processor
+        p._model = model
+        p._audio_context_seconds = 3.0
 
-class TestTranslateWithContext:
-    def test_strips_context_prefix(self) -> None:
-        processor = MagicMock()
-        model = MagicMock()
+        fake_pcm = b"\x00\x01" * 100
+        captured_audio: list[np.ndarray] = []
 
-        call_count = 0
+        def mock_translate(proc, mdl, audio):
+            captured_audio.append(audio)
+            return "Hola."
 
-        def mock_translate(p, m, audio):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return "Buenos días mundo"
-            return "Buenos días"
+        async def input_stream() -> AsyncIterator[bytes]:
+            # Two segments worth of data
+            yield _make_audio_chunk(n_samples=16000 * 4, sample_rate=16000)
+            yield _make_audio_chunk(n_samples=16000 * 4, sample_rate=16000)
 
-        with patch(
-            "src.pipelines.spanish_direct._translate_audio_sync",
-            side_effect=mock_translate,
+        with (
+            patch(
+                "src.pipelines.spanish_direct._synthesize_spanish",
+                new=AsyncMock(return_value=fake_pcm),
+            ),
+            patch(
+                "src.pipelines.spanish_direct._translate_audio_sync",
+                side_effect=mock_translate,
+            ),
         ):
-            result = _translate_with_context_sync(
-                processor,
-                model,
-                np.ones(100, dtype=np.float32),
-                np.ones(200, dtype=np.float32),
-            )
+            async for _ in p.process(input_stream()):
+                pass
 
-        assert result == "mundo"
+        # First call: segment only (no context yet)
+        # Second call: context + segment (longer audio)
+        assert len(captured_audio) == 2
+        assert len(captured_audio[1]) > len(captured_audio[0])
 
-    def test_no_context_delegates(self) -> None:
+
+
+class TestDecodeTokens:
+    def test_filters_special_and_oov(self) -> None:
         processor = MagicMock()
-        model = MagicMock()
+        tok = MagicMock()
+        processor.tokenizer = tok
+        tok.all_special_ids = [0, 1, 2]
+        tok.sp_model.get_piece_size.return_value = 100
+        tok.fairseq_offset = 4
+        tok.decode.return_value = "  hello world  "
 
-        with patch(
-            "src.pipelines.spanish_direct._translate_audio_sync",
-            return_value="Hola mundo",
-        ) as mock:
-            result = _translate_with_context_sync(
-                processor,
-                model,
-                np.array([], dtype=np.float32),
-                np.ones(200, dtype=np.float32),
-            )
+        result = _decode_tokens(processor, [0, 1, 50, 105, 60])
+        # Filters: 0,1 (special), 105 (>=104 sp_limit) → keeps [50, 60]
+        tok.decode.assert_called_once_with([50, 60], skip_special_tokens=False)
+        assert result == "hello world"
 
-        assert result == "Hola mundo"
-        mock.assert_called_once()
 
-    def test_fallback_when_no_overlap(self) -> None:
-        processor = MagicMock()
-        model = MagicMock()
+class TestSynthesizeSpanish:
+    async def test_empty_text_returns_empty(self) -> None:
+        from src.pipelines.spanish_direct import _synthesize_spanish
 
-        call_count = 0
+        assert await _synthesize_spanish("", 48000) == b""
+        assert await _synthesize_spanish("   ", 48000) == b""
 
-        def mock_translate(p, m, audio):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return "Completely different"
-            return "Something else"
+    async def test_edge_tts_exception_returns_empty(self) -> None:
+        from src.pipelines.spanish_direct import _synthesize_spanish
 
-        with patch(
-            "src.pipelines.spanish_direct._translate_audio_sync",
-            side_effect=mock_translate,
-        ):
-            result = _translate_with_context_sync(
-                processor,
-                model,
-                np.ones(100, dtype=np.float32),
-                np.ones(200, dtype=np.float32),
-            )
+        mock_communicate = MagicMock()
+        mock_communicate.stream.side_effect = RuntimeError("boom")
+        with patch("edge_tts.Communicate", return_value=mock_communicate):
+            result = await _synthesize_spanish("Hola", 48000)
 
-        assert result == "Completely different"
+        assert result == b""
 
 
 async def _drain_async_iter(it: AsyncIterator[bytes]) -> list[bytes]:
