@@ -47,21 +47,6 @@ class TestSpanishDirectPipeline:
         assert "audio" in names
         assert "es-transcript" in names
 
-    def test_configure_session(self) -> None:
-        p = SpanishDirectPipeline()
-        session = Session(
-            pipeline_id="spanish-direct",
-            audio_context_seconds=10.0,
-        )
-        p.configure_session(session)
-        assert p._audio_context_seconds == 10.0
-
-    def test_configure_session_default(self) -> None:
-        p = SpanishDirectPipeline()
-        session = Session(pipeline_id="spanish-direct")
-        p.configure_session(session)
-        assert p._audio_context_seconds == 0.0
-
     async def test_process_produces_audio(self) -> None:
         p = SpanishDirectPipeline(sample_rate=16000)
         processor, model = _make_mock_processor_and_model()
@@ -75,7 +60,7 @@ class TestSpanishDirectPipeline:
 
         with (
             patch(
-                "src.pipelines.spanish_direct._synthesize_spanish",
+                "src.pipelines.spanish_direct.synthesize_spanish",
                 new=AsyncMock(return_value=fake_pcm),
             ),
             patch(
@@ -103,7 +88,7 @@ class TestSpanishDirectPipeline:
 
         with (
             patch(
-                "src.pipelines.spanish_direct._synthesize_spanish",
+                "src.pipelines.spanish_direct.synthesize_spanish",
                 new=AsyncMock(return_value=fake_pcm),
             ),
             patch(
@@ -201,7 +186,10 @@ class TestSpanishDirectPipeline:
         processor, model = _make_mock_processor_and_model()
         p._processor = processor
         p._model = model
-        p._audio_context_seconds = 3.0
+        session = Session(
+            pipeline_id="spanish-direct",
+            audio_context_seconds=3.0,
+        )
 
         fake_pcm = b"\x00\x01" * 100
         captured_audio: list[np.ndarray] = []
@@ -217,7 +205,7 @@ class TestSpanishDirectPipeline:
 
         with (
             patch(
-                "src.pipelines.spanish_direct._synthesize_spanish",
+                "src.pipelines.spanish_direct.synthesize_spanish",
                 new=AsyncMock(return_value=fake_pcm),
             ),
             patch(
@@ -225,7 +213,7 @@ class TestSpanishDirectPipeline:
                 side_effect=mock_translate,
             ),
         ):
-            async for _ in p.process(input_stream()):
+            async for _ in p.process(input_stream(), session=session):
                 pass
 
         # First call: segment only (no context yet)
@@ -253,18 +241,18 @@ class TestDecodeTokens:
 
 class TestSynthesizeSpanish:
     async def test_empty_text_returns_empty(self) -> None:
-        from src.pipelines.spanish_direct import _synthesize_spanish
+        from src.pipelines._audio import synthesize_spanish
 
-        assert await _synthesize_spanish("", 48000) == b""
-        assert await _synthesize_spanish("   ", 48000) == b""
+        assert await synthesize_spanish("", 48000) == b""
+        assert await synthesize_spanish("   ", 48000) == b""
 
     async def test_edge_tts_exception_returns_empty(self) -> None:
-        from src.pipelines.spanish_direct import _synthesize_spanish
+        from src.pipelines._audio import synthesize_spanish
 
         mock_communicate = MagicMock()
         mock_communicate.stream.side_effect = RuntimeError("boom")
         with patch("edge_tts.Communicate", return_value=mock_communicate):
-            result = await _synthesize_spanish("Hola", 48000)
+            result = await synthesize_spanish("Hola", 48000)
 
         assert result == b""
 

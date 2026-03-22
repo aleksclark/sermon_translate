@@ -94,7 +94,7 @@ class TestSeamlessStreamingPipeline:
 
         with (
             patch(
-                f"{SEAMLESS_STREAMING_MODULE}._synthesize_spanish",
+                f"{SEAMLESS_STREAMING_MODULE}.synthesize_spanish",
                 new=AsyncMock(return_value=fake_pcm),
             ),
             patch(
@@ -122,7 +122,7 @@ class TestSeamlessStreamingPipeline:
 
         with (
             patch(
-                f"{SEAMLESS_STREAMING_MODULE}._synthesize_spanish",
+                f"{SEAMLESS_STREAMING_MODULE}.synthesize_spanish",
                 new=AsyncMock(return_value=fake_pcm),
             ),
             patch(
@@ -190,7 +190,7 @@ class TestSeamlessStreamingPipeline:
 
         with (
             patch(
-                f"{SEAMLESS_STREAMING_MODULE}._synthesize_spanish",
+                f"{SEAMLESS_STREAMING_MODULE}.synthesize_spanish",
                 new=AsyncMock(return_value=b"\x00\x01" * 100),
             ),
             patch(
@@ -281,18 +281,18 @@ class TestBuildAgentArgs:
 
 class TestSynthesizeSpanish:
     async def test_empty_text_returns_empty(self) -> None:
-        from src.pipelines.seamless_streaming import _synthesize_spanish
+        from src.pipelines._audio import synthesize_spanish
 
-        assert await _synthesize_spanish("", 48000) == b""
-        assert await _synthesize_spanish("   ", 48000) == b""
+        assert await synthesize_spanish("", 48000) == b""
+        assert await synthesize_spanish("   ", 48000) == b""
 
     async def test_edge_tts_exception_returns_empty(self) -> None:
-        from src.pipelines.seamless_streaming import _synthesize_spanish
+        from src.pipelines._audio import synthesize_spanish
 
         mock_communicate = MagicMock()
         mock_communicate.stream.side_effect = RuntimeError("boom")
         with patch("edge_tts.Communicate", return_value=mock_communicate):
-            result = await _synthesize_spanish("Hola", 48000)
+            result = await synthesize_spanish("Hola", 48000)
 
         assert result == b""
 

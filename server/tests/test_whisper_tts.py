@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 
-from src.pipelines.whisper_tts import WhisperTTSPipeline, _downsample
+from src.pipelines._audio import downsample
+from src.pipelines.whisper_tts import WhisperTTSPipeline
 
 
 def _make_audio_chunk(n_samples: int = 4096, sample_rate: int = 48000) -> bytes:
@@ -158,11 +159,11 @@ class TestWhisperTTSPipeline:
 
     def test_downsample(self) -> None:
         audio = np.ones(48000, dtype=np.float32)
-        result = _downsample(audio, 48000, 16000)
+        result = downsample(audio, 48000, 16000)
         assert len(result) == 16000
 
     def test_downsample_noop(self) -> None:
         audio = np.ones(16000, dtype=np.float32)
-        result = _downsample(audio, 16000, 16000)
+        result = downsample(audio, 16000, 16000)
         assert len(result) == 16000
         assert result is audio

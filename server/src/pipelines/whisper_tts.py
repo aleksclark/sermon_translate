@@ -7,7 +7,8 @@ from functools import partial
 
 import numpy as np
 
-from src.models import OutputStreamInfo, PipelineInfo
+from src.models import PipelineInfo, Session
+from src.pipelines._audio import downsample
 from src.pipelines.base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
 
 logger = logging.getLogger(__name__)
@@ -17,16 +18,7 @@ BUFFER_SECONDS = 3
 MIN_BUFFER_SECONDS = 1.0
 
 
-def _downsample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
-    if src_rate == dst_rate:
-        return audio
-    ratio = dst_rate / src_rate
-    n_samples = int(len(audio) * ratio)
-    indices = np.linspace(0, len(audio) - 1, n_samples).astype(np.int64)
-    return audio[indices]
-
-
-def _transcribe_sync(model, audio: np.ndarray) -> list[str]:
+def _transcribe_sync(model, audio: np.ndarray) -> list[str]:  # type: ignore[no-untyped-def]
     segments, _ = model.transcribe(audio, beam_size=1, language="en", vad_filter=True)
     results = []
     for seg in segments:
@@ -40,6 +32,7 @@ class WhisperTTSPipeline(BasePipeline):
     """Speech-to-text pipeline using faster-whisper."""
 
     def __init__(self, model_size: str = "base", sample_rate: int = 48000) -> None:
+        super().__init__()
         self._model_size = model_size
         self._sample_rate = sample_rate
         self._model = None
@@ -50,10 +43,7 @@ class WhisperTTSPipeline(BasePipeline):
             id="whisper-tts",
             name="Whisper TTS",
             description="Speech-to-text using faster-whisper — streams transcript from audio.",
-            output_streams=[
-                OutputStreamInfo(name=s.name, kind=s.kind.value, label=s.label)
-                for s in self.output_streams
-            ],
+            output_streams=self._build_output_stream_info(),
         )
 
     @property
@@ -64,22 +54,24 @@ class WhisperTTSPipeline(BasePipeline):
             ),
         ]
 
-    async def start(self) -> None:
+    async def _do_start(self) -> None:
         if self._model is not None:
             return
         loop = asyncio.get_running_loop()
         self._model = await loop.run_in_executor(None, self._load_model)
         logger.info("Whisper model '%s' loaded", self._model_size)
 
-    def _load_model(self):
+    def _load_model(self):  # type: ignore[no-untyped-def]
         from faster_whisper import WhisperModel
 
         return WhisperModel(self._model_size, device="cpu", compute_type="int8")
 
-    async def stop(self) -> None:
+    async def _do_stop(self) -> None:
         self._model = None
 
-    async def process(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    async def process(
+        self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
+    ) -> AsyncIterator[bytes]:
         return
         yield  # noqa: F841
 
@@ -102,7 +94,7 @@ class WhisperTTSPipeline(BasePipeline):
         async for chunk in audio_stream:
             pcm_int16 = np.frombuffer(chunk, dtype=np.int16)
             pcm_float = pcm_int16.astype(np.float32) / 32768.0
-            downsampled = _downsample(pcm_float, self._sample_rate, WHISPER_SAMPLE_RATE)
+            downsampled = downsample(pcm_float, self._sample_rate, WHISPER_SAMPLE_RATE)
             buffer = np.concatenate([buffer, downsampled])
 
             if len(buffer) >= samples_needed:

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import abc
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
 
-from src.models import PipelineInfo, Session
+from src.models import OutputStreamInfo, PipelineInfo, Session
 
 
 class OutputStreamKind(StrEnum):
@@ -23,6 +24,10 @@ class OutputStreamDescriptor:
 class BasePipeline(abc.ABC):
     """Base class for all translation pipelines."""
 
+    def __init__(self) -> None:
+        self._ref_count = 0
+        self._ref_lock = asyncio.Lock()
+
     @property
     @abc.abstractmethod
     def info(self) -> PipelineInfo: ...
@@ -36,26 +41,41 @@ class BasePipeline(abc.ABC):
         """
         return [OutputStreamDescriptor(name="audio", kind=OutputStreamKind.AUDIO)]
 
+    def _build_output_stream_info(self) -> list[OutputStreamInfo]:
+        return [
+            OutputStreamInfo(name=s.name, kind=s.kind.value, label=s.label)
+            for s in self.output_streams
+        ]
+
     @abc.abstractmethod
-    def process(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    def process(
+        self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
+    ) -> AsyncIterator[bytes]:
         """Accept an async stream of audio chunks and yield processed chunks.
 
         Audio yielded here is sent on the ``"audio"`` output stream.
+        ``session`` carries per-session config (sample_rate, audio_context_seconds, etc.).
         """
         ...
 
-    async def start(self) -> None:  # noqa: B027
-        """Called when a session using this pipeline starts."""
+    async def _do_start(self) -> None:  # noqa: B027
+        """Subclass hook: load models / allocate resources."""
 
-    async def stop(self) -> None:  # noqa: B027
-        """Called when a session using this pipeline stops."""
+    async def _do_stop(self) -> None:  # noqa: B027
+        """Subclass hook: release models / free resources."""
 
-    def configure_session(self, session: Session) -> None:  # noqa: B027
-        """Called before start() with session settings.
+    async def start(self) -> None:
+        async with self._ref_lock:
+            if self._ref_count == 0:
+                await self._do_start()
+            self._ref_count += 1
 
-        Pipelines that care about per-session config (e.g. audio_context_seconds)
-        should override this.
-        """
+    async def stop(self) -> None:
+        async with self._ref_lock:
+            self._ref_count -= 1
+            if self._ref_count <= 0:
+                self._ref_count = 0
+                await self._do_stop()
 
     def iter_stream(
         self, name: str, audio_stream: AsyncIterator[bytes]
@@ -67,3 +87,11 @@ class BasePipeline(abc.ABC):
         Return ``None`` if the stream has no data.
         """
         return None
+
+    @staticmethod
+    async def _drain_queue(q: asyncio.Queue[str | None]) -> AsyncIterator[str]:
+        while True:
+            text = await q.get()
+            if text is None:
+                return
+            yield text

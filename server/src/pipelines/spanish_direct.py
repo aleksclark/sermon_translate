@@ -7,52 +7,19 @@ from typing import Any
 
 import numpy as np
 
-from src.models import OutputStreamInfo, PipelineInfo, Session
+from src.models import PipelineInfo, Session
+from src.pipelines._audio import downsample, synthesize_spanish
 from src.pipelines.base import (
     BasePipeline,
     OutputStreamDescriptor,
     OutputStreamKind,
 )
-from src.pipelines.spanish import (
-    EDGE_TTS_VOICE,
-    _decode_mp3_to_pcm,
-)
-from src.pipelines.whisper_tts import _downsample
 
 logger = logging.getLogger(__name__)
 
 SEAMLESS_SAMPLE_RATE = 16000
 BUFFER_SECONDS = 3
 MIN_BUFFER_SECONDS = 1.0
-
-
-async def _synthesize_spanish(text: str, target_rate: int) -> bytes:
-    import edge_tts
-
-    if not text or not text.strip():
-        return b""
-
-    try:
-        communicate = edge_tts.Communicate(text, voice=EDGE_TTS_VOICE)
-        mp3_data = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                mp3_data += chunk.get("data", b"")
-    except Exception:
-        logger.exception("edge-tts failed for text: %r", text[:80])
-        return b""
-
-    if not mp3_data:
-        return b""
-
-    loop = asyncio.get_running_loop()
-    try:
-        return await loop.run_in_executor(
-            None, _decode_mp3_to_pcm, mp3_data, target_rate
-        )
-    except Exception:
-        logger.exception("MP3 decode failed")
-        return b""
 
 
 def _generate_tokens(
@@ -111,10 +78,10 @@ class SpanishDirectPipeline(BasePipeline):
     """English audio in → Spanish audio + transcript via SeamlessM4T."""
 
     def __init__(self, sample_rate: int = 48000) -> None:
+        super().__init__()
         self._sample_rate = sample_rate
         self._processor: Any = None
         self._model: Any = None
-        self._audio_context_seconds: float = 0.0
         self._es_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     @property
@@ -126,12 +93,7 @@ class SpanishDirectPipeline(BasePipeline):
                 "Direct English speech to Spanish translation "
                 "using SeamlessM4T. Supports audio context."
             ),
-            output_streams=[
-                OutputStreamInfo(
-                    name=s.name, kind=s.kind.value, label=s.label
-                )
-                for s in self.output_streams
-            ],
+            output_streams=self._build_output_stream_info(),
         )
 
     @property
@@ -149,10 +111,7 @@ class SpanishDirectPipeline(BasePipeline):
             ),
         ]
 
-    def configure_session(self, session: Session) -> None:
-        self._audio_context_seconds = session.audio_context_seconds
-
-    async def start(self) -> None:
+    async def _do_start(self) -> None:
         if self._model is not None:
             return
         loop = asyncio.get_running_loop()
@@ -220,36 +179,38 @@ class SpanishDirectPipeline(BasePipeline):
         model.eval()
         return processor, model
 
-    async def stop(self) -> None:
+    async def _do_stop(self) -> None:
         self._processor = None
         self._model = None
         await self._es_queue.put(None)
 
     async def process(
-        self, audio_stream: AsyncIterator[bytes]
+        self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
     ) -> AsyncIterator[bytes]:
         if self._model is None:
             await self.start()
+
+        audio_context_seconds = 0.0
+        if session is not None:
+            audio_context_seconds = session.audio_context_seconds
 
         buffer = np.array([], dtype=np.float32)
         context = np.array([], dtype=np.float32)
         samples_needed = int(SEAMLESS_SAMPLE_RATE * BUFFER_SECONDS)
         min_samples = int(SEAMLESS_SAMPLE_RATE * MIN_BUFFER_SECONDS)
-        context_samples = int(
-            SEAMLESS_SAMPLE_RATE * self._audio_context_seconds
-        )
+        context_samples = int(SEAMLESS_SAMPLE_RATE * audio_context_seconds)
         loop = asyncio.get_running_loop()
 
         logger.info(
             "process() started: sample_rate=%d, buffer_s=%d, need=%d, ctx_s=%.1f",
             self._sample_rate, BUFFER_SECONDS, samples_needed,
-            self._audio_context_seconds,
+            audio_context_seconds,
         )
 
         async for chunk in audio_stream:
             pcm_int16 = np.frombuffer(chunk, dtype=np.int16)
             pcm_float = pcm_int16.astype(np.float32) / 32768.0
-            downsampled = _downsample(
+            downsampled = downsample(
                 pcm_float, self._sample_rate, SEAMLESS_SAMPLE_RATE
             )
             buffer = np.concatenate([buffer, downsampled])
@@ -305,7 +266,7 @@ class SpanishDirectPipeline(BasePipeline):
             return
 
         await self._es_queue.put(es_text)
-        pcm_bytes = await _synthesize_spanish(es_text, self._sample_rate)
+        pcm_bytes = await synthesize_spanish(es_text, self._sample_rate)
         logger.info("TTS produced %d bytes", len(pcm_bytes))
         if pcm_bytes:
             yield pcm_bytes
@@ -329,13 +290,3 @@ class SpanishDirectPipeline(BasePipeline):
         if name == "es-transcript":
             return self._drain_queue(self._es_queue)
         return None
-
-    @staticmethod
-    async def _drain_queue(
-        q: asyncio.Queue[str | None],
-    ) -> AsyncIterator[str]:
-        while True:
-            text = await q.get()
-            if text is None:
-                return
-            yield text

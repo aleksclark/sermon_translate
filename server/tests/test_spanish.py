@@ -74,7 +74,7 @@ class TestSpanishTranslationPipeline:
             yield _make_audio_chunk(n_samples=16000 * 4, sample_rate=16000)
 
         with patch(
-            "src.pipelines.spanish._synthesize_spanish",
+            "src.pipelines.spanish.synthesize_spanish",
             new=AsyncMock(return_value=fake_pcm),
         ):
             output: list[bytes] = []
@@ -97,7 +97,7 @@ class TestSpanishTranslationPipeline:
             yield _make_audio_chunk(n_samples=16000 * 4, sample_rate=16000)
 
         with patch(
-            "src.pipelines.spanish._synthesize_spanish",
+            "src.pipelines.spanish.synthesize_spanish",
             new=AsyncMock(return_value=fake_pcm),
         ):
             en_iter = p.iter_stream("en-transcript", input_stream())

@@ -5,7 +5,7 @@ import collections
 import time
 from collections.abc import AsyncIterator
 
-from src.models import OutputStreamInfo, PipelineInfo
+from src.models import PipelineInfo, Session
 from src.pipelines.base import BasePipeline
 
 DELAY_SECONDS = 5.0
@@ -14,19 +14,21 @@ DELAY_SECONDS = 5.0
 class EchoPipeline(BasePipeline):
     """Echoes audio back to the client after a fixed delay."""
 
+    def __init__(self) -> None:
+        super().__init__()
+
     @property
     def info(self) -> PipelineInfo:
         return PipelineInfo(
             id="echo",
             name="Echo (5s delay)",
             description="Echoes audio back after a 5-second delay. Useful for testing.",
-            output_streams=[
-                OutputStreamInfo(name=s.name, kind=s.kind.value, label=s.label)
-                for s in self.output_streams
-            ],
+            output_streams=self._build_output_stream_info(),
         )
 
-    async def process(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    async def process(
+        self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
+    ) -> AsyncIterator[bytes]:
         buffer: collections.deque[tuple[float, bytes]] = collections.deque()
 
         async def drain() -> AsyncIterator[bytes]:

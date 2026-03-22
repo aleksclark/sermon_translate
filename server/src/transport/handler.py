@@ -35,7 +35,6 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
         return
 
     session.status = SessionStatus.ACTIVE
-    pipeline.configure_session(session)
     await pipeline.start()
     await transport.send_event(
         TransportEvent(type=EventType.SESSION_START, session_id=session_id)
@@ -68,7 +67,7 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
                 yield item
 
         async def forward_audio(stream: AsyncIterator[bytes]) -> None:
-            async for chunk in pipeline.process(stream):
+            async for chunk in pipeline.process(stream, session=session):
                 if stop_event.is_set():
                     break
                 session.stats.bytes_sent += len(chunk)

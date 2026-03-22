@@ -9,10 +9,9 @@ from typing import Any
 
 import numpy as np
 
-from src.models import OutputStreamInfo, PipelineInfo, Session
+from src.models import PipelineInfo, Session
+from src.pipelines._audio import downsample, synthesize_spanish
 from src.pipelines.base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
-from src.pipelines.spanish import EDGE_TTS_VOICE, _decode_mp3_to_pcm
-from src.pipelines.whisper_tts import _downsample
 
 logger = logging.getLogger(__name__)
 
@@ -32,33 +31,6 @@ def _has_cuda() -> bool:
     import torch
 
     return torch.cuda.is_available()
-
-
-async def _synthesize_spanish(text: str, target_rate: int) -> bytes:
-    import edge_tts
-
-    if not text or not text.strip():
-        return b""
-
-    try:
-        communicate = edge_tts.Communicate(text, voice=EDGE_TTS_VOICE)
-        mp3_data = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                mp3_data += chunk.get("data", b"")
-    except Exception:
-        logger.exception("edge-tts failed for text: %r", text[:80])
-        return b""
-
-    if not mp3_data:
-        return b""
-
-    loop = asyncio.get_running_loop()
-    try:
-        return await loop.run_in_executor(None, _decode_mp3_to_pcm, mp3_data, target_rate)
-    except Exception:
-        logger.exception("MP3 decode failed")
-        return b""
 
 
 def _build_agent_args(tgt_lang: str = "spa", device: str = "cpu") -> Namespace:
@@ -291,6 +263,7 @@ class SeamlessStreamingPipeline(BasePipeline):
     """
 
     def __init__(self, sample_rate: int = 48000) -> None:
+        super().__init__()
         self._sample_rate = sample_rate
         self._agent: Any = None
         self._tgt_lang = "spa"
@@ -307,10 +280,7 @@ class SeamlessStreamingPipeline(BasePipeline):
                 "SeamlessStreaming with EMMA monotonic attention. Outputs "
                 "only new tokens incrementally — no repeated context."
             ),
-            output_streams=[
-                OutputStreamInfo(name=s.name, kind=s.kind.value, label=s.label)
-                for s in self.output_streams
-            ],
+            output_streams=self._build_output_stream_info(),
         )
 
     @property
@@ -324,10 +294,7 @@ class SeamlessStreamingPipeline(BasePipeline):
             ),
         ]
 
-    def configure_session(self, session: Session) -> None:
-        pass
-
-    async def start(self) -> None:
+    async def _do_start(self) -> None:
         if self._agent is not None:
             return
         loop = asyncio.get_running_loop()
@@ -336,11 +303,13 @@ class SeamlessStreamingPipeline(BasePipeline):
         )
         logger.info("SeamlessStreaming agent loaded (device=%s)", self._device)
 
-    async def stop(self) -> None:
+    async def _do_stop(self) -> None:
         self._agent = None
         await self._es_queue.put(None)
 
-    async def process(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    async def process(
+        self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
+    ) -> AsyncIterator[bytes]:
         if self._agent is None:
             await self.start()
 
@@ -365,7 +334,7 @@ class SeamlessStreamingPipeline(BasePipeline):
         async def _tts_one(seq: int, text: str) -> None:
             nonlocal emit_seq
             async with tts_sem:
-                pcm = await _synthesize_spanish(text, self._sample_rate)
+                pcm = await synthesize_spanish(text, self._sample_rate)
             if pcm:
                 logger.info("TTS produced %d bytes (seq=%d)", len(pcm), seq)
             async with emit_lock:
@@ -402,7 +371,7 @@ class SeamlessStreamingPipeline(BasePipeline):
             async for raw in audio_stream:
                 pcm_int16 = np.frombuffer(raw, dtype=np.int16)
                 pcm_float = pcm_int16.astype(np.float32) / 32768.0
-                downsampled = _downsample(pcm_float, self._sample_rate, MODEL_SAMPLE_RATE)
+                downsampled = downsample(pcm_float, self._sample_rate, MODEL_SAMPLE_RATE)
                 buffer = np.concatenate([buffer, downsampled])
                 while len(buffer) >= CHUNK_SAMPLES:
                     await chunk_queue.put(buffer[:CHUNK_SAMPLES].copy())
@@ -431,11 +400,3 @@ class SeamlessStreamingPipeline(BasePipeline):
         if name == "es-transcript":
             return self._drain_queue(self._es_queue)
         return None
-
-    @staticmethod
-    async def _drain_queue(q: asyncio.Queue[str | None]) -> AsyncIterator[str]:
-        while True:
-            text = await q.get()
-            if text is None:
-                return
-            yield text

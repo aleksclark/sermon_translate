@@ -1,24 +1,21 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
 from collections.abc import AsyncIterator
 from functools import partial
 from typing import Any
 
-import av
 import numpy as np
 import sentencepiece as spm
 
-from src.models import OutputStreamInfo, PipelineInfo
+from src.models import PipelineInfo, Session
+from src.pipelines._audio import downsample, synthesize_spanish
 from src.pipelines.base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
-from src.pipelines.whisper_tts import WHISPER_SAMPLE_RATE, _downsample, _transcribe_sync
+from src.pipelines.whisper_tts import WHISPER_SAMPLE_RATE, _transcribe_sync
 
 logger = logging.getLogger(__name__)
 
-EDGE_TTS_SAMPLE_RATE = 24000
-EDGE_TTS_VOICE = "es-ES-AlvaroNeural"
 BUFFER_SECONDS = 3
 MIN_BUFFER_SECONDS = 1.0
 TRANSLATION_MODEL_ID = "Helsinki-NLP/opus-mt-en-es"
@@ -36,54 +33,11 @@ def _translate_sync(
     return sp_target.decode(out_tokens)  # type: ignore[no-any-return]
 
 
-def _decode_mp3_to_pcm(mp3_data: bytes, target_rate: int) -> bytes:
-    container = av.open(io.BytesIO(mp3_data), format="mp3")
-    frames: list[np.ndarray] = []
-    for frame in container.decode(audio=0):  # type: ignore[attr-defined]
-        frames.append(frame.to_ndarray())
-
-    if not frames:
-        return b""
-
-    audio = np.concatenate(frames, axis=1)
-    mono = audio[0] if audio.shape[0] > 1 else audio.flatten()
-    pcm_float = mono.astype(np.float32)
-    resampled = _downsample(pcm_float, EDGE_TTS_SAMPLE_RATE, target_rate)
-    pcm_int16 = (resampled * 32767).clip(-32768, 32767).astype(np.int16)
-    return pcm_int16.tobytes()
-
-
-async def _synthesize_spanish(text: str, target_rate: int) -> bytes:
-    import edge_tts
-
-    if not text or not text.strip():
-        return b""
-
-    try:
-        communicate = edge_tts.Communicate(text, voice=EDGE_TTS_VOICE)
-        mp3_data = b""
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                mp3_data += chunk.get("data", b"")
-    except Exception:
-        logger.exception("edge-tts failed for text: %r", text[:80])
-        return b""
-
-    if not mp3_data:
-        return b""
-
-    loop = asyncio.get_running_loop()
-    try:
-        return await loop.run_in_executor(None, _decode_mp3_to_pcm, mp3_data, target_rate)
-    except Exception:
-        logger.exception("MP3 decode failed")
-        return b""
-
-
 class SpanishTranslationPipeline(BasePipeline):
     """English audio in → Spanish audio + EN/ES transcripts out."""
 
     def __init__(self, whisper_model_size: str = "base", sample_rate: int = 48000) -> None:
+        super().__init__()
         self._whisper_model_size = whisper_model_size
         self._sample_rate = sample_rate
         self._whisper_model: Any = None
@@ -99,10 +53,7 @@ class SpanishTranslationPipeline(BasePipeline):
             id="spanish-translation",
             name="Spanish Translation",
             description="Translates English speech to Spanish audio with transcript.",
-            output_streams=[
-                OutputStreamInfo(name=s.name, kind=s.kind.value, label=s.label)
-                for s in self.output_streams
-            ],
+            output_streams=self._build_output_stream_info(),
         )
 
     @property
@@ -119,7 +70,7 @@ class SpanishTranslationPipeline(BasePipeline):
             ),
         ]
 
-    async def start(self) -> None:
+    async def _do_start(self) -> None:
         loop = asyncio.get_running_loop()
         if self._whisper_model is None:
             self._whisper_model = await loop.run_in_executor(None, self._load_whisper)
@@ -181,7 +132,7 @@ class SpanishTranslationPipeline(BasePipeline):
         converter.convert(output_dir, quantization="int8", force=True)
         logger.info("Translation model converted to %s", output_dir)
 
-    async def stop(self) -> None:
+    async def _do_stop(self) -> None:
         self._whisper_model = None
         self._translator = None
         self._sp_source = None
@@ -189,7 +140,9 @@ class SpanishTranslationPipeline(BasePipeline):
         await self._en_queue.put(None)
         await self._es_queue.put(None)
 
-    async def process(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
+    async def process(
+        self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
+    ) -> AsyncIterator[bytes]:
         if self._whisper_model is None or self._translator is None:
             await self.start()
 
@@ -201,7 +154,7 @@ class SpanishTranslationPipeline(BasePipeline):
         async for chunk in audio_stream:
             pcm_int16 = np.frombuffer(chunk, dtype=np.int16)
             pcm_float = pcm_int16.astype(np.float32) / 32768.0
-            downsampled = _downsample(pcm_float, self._sample_rate, WHISPER_SAMPLE_RATE)
+            downsampled = downsample(pcm_float, self._sample_rate, WHISPER_SAMPLE_RATE)
             buffer = np.concatenate([buffer, downsampled])
 
             if len(buffer) >= samples_needed:
@@ -233,7 +186,7 @@ class SpanishTranslationPipeline(BasePipeline):
             await self._en_queue.put(en_text)
             await self._es_queue.put(es_text)
 
-            pcm_bytes = await _synthesize_spanish(es_text, self._sample_rate)
+            pcm_bytes = await synthesize_spanish(es_text, self._sample_rate)
             if pcm_bytes:
                 yield pcm_bytes
 
@@ -245,11 +198,3 @@ class SpanishTranslationPipeline(BasePipeline):
         if name == "es-transcript":
             return self._drain_queue(self._es_queue)
         return None
-
-    @staticmethod
-    async def _drain_queue(q: asyncio.Queue[str | None]) -> AsyncIterator[str]:
-        while True:
-            text = await q.get()
-            if text is None:
-                return
-            yield text
