@@ -19,15 +19,24 @@ export interface TranscriptLine {
   timestamp: number;
 }
 
-interface FileMediaStreamResult {
+interface SampleMediaStreamResult {
   stream: MediaStream;
   durationMs: number;
+  audioBuffer: AudioBuffer;
+  audioContext: AudioContext;
+  sourceNode: AudioBufferSourceNode;
 }
 
-async function createFileMediaStream(file: File, sampleRate: number): Promise<FileMediaStreamResult> {
+async function createSampleMediaStream(
+  url: string,
+  sampleRate: number,
+): Promise<SampleMediaStreamResult> {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Failed to fetch sample: ${resp.status}`);
+  const arrayBuffer = await resp.arrayBuffer();
+
   const audioCtx = new AudioContext({ sampleRate });
   await audioCtx.resume();
-  const arrayBuffer = await file.arrayBuffer();
   const decoded = await audioCtx.decodeAudioData(arrayBuffer);
 
   const source = audioCtx.createBufferSource();
@@ -40,7 +49,20 @@ async function createFileMediaStream(file: File, sampleRate: number): Promise<Fi
     dest.stream.getTracks().forEach((t) => t.stop());
   };
 
-  return { stream: dest.stream, durationMs: decoded.duration * 1000 };
+  return {
+    stream: dest.stream,
+    durationMs: decoded.duration * 1000,
+    audioBuffer: decoded,
+    audioContext: audioCtx,
+    sourceNode: source,
+  };
+}
+
+export interface AudioNodes {
+  sourceAnalyser: AnalyserNode | null;
+  outputAnalyser: AnalyserNode | null;
+  sourceGain: GainNode | null;
+  outputGain: GainNode | null;
 }
 
 export function useAudioStream(options: AudioStreamOptions | null) {
@@ -48,8 +70,16 @@ export function useAudioStream(options: AudioStreamOptions | null) {
   const [muted, setMuted] = useState(false);
   const [liveStats, setLiveStats] = useState<SessionStats | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, TranscriptLine[]>>({});
+  const [audioNodes, setAudioNodes] = useState<AudioNodes>({
+    sourceAnalyser: null,
+    outputAnalyser: null,
+    sourceGain: null,
+    outputGain: null,
+  });
   const transportRef = useRef<WebRTCTransport | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const sourceCtxRef = useRef<AudioContext | null>(null);
+  const outputCtxRef = useRef<AudioContext | null>(null);
   const cancelledRef = useRef(false);
 
   const stop = useCallback(() => {
@@ -63,10 +93,20 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     transportRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    sourceCtxRef.current?.close().catch(() => {});
+    sourceCtxRef.current = null;
+    outputCtxRef.current?.close().catch(() => {});
+    outputCtxRef.current = null;
     setConnected(false);
     setMuted(false);
     setLiveStats(null);
     setTranscripts({});
+    setAudioNodes({
+      sourceAnalyser: null,
+      outputAnalyser: null,
+      sourceGain: null,
+      outputGain: null,
+    });
   }, []);
 
   const toggleMute = useCallback(() => {
@@ -87,6 +127,9 @@ export function useAudioStream(options: AudioStreamOptions | null) {
 
       let inputStream: MediaStream;
       let fileDurationMs: number | null = null;
+      let sourceAnalyser: AnalyserNode | null = null;
+      let sourceGain: GainNode | null = null;
+      let srcCtx: AudioContext | null = null;
 
       if (audioSource.type === "mic") {
         inputStream = await navigator.mediaDevices.getUserMedia({
@@ -99,36 +142,61 @@ export function useAudioStream(options: AudioStreamOptions | null) {
             autoGainControl: false,
           },
         });
-      } else if (audioSource.type === "file" && audioSource.file) {
-        const result = await createFileMediaStream(audioSource.file, sampleRate);
+      } else if (audioSource.type === "sample" && audioSource.sampleUrl) {
+        const result = await createSampleMediaStream(audioSource.sampleUrl, sampleRate);
         inputStream = result.stream;
         fileDurationMs = result.durationMs;
+        srcCtx = result.audioContext;
+
+        sourceAnalyser = srcCtx.createAnalyser();
+        sourceAnalyser.fftSize = 256;
+        sourceGain = srcCtx.createGain();
+
+        result.sourceNode.connect(sourceAnalyser);
+        result.sourceNode.connect(sourceGain);
+        sourceGain.connect(srcCtx.destination);
       } else {
         return;
       }
 
       if (cancelledRef.current) {
         inputStream.getTracks().forEach((t) => t.stop());
+        srcCtx?.close().catch(() => {});
         return;
       }
       streamRef.current = inputStream;
+      sourceCtxRef.current = srcCtx;
 
       const transport = new WebRTCTransport(sessionId, inputStream, outputDeviceId);
       try {
         await transport.connect();
       } catch {
         inputStream.getTracks().forEach((t) => t.stop());
+        srcCtx?.close().catch(() => {});
         return;
       }
       if (cancelledRef.current) {
         transport.close();
+        srcCtx?.close().catch(() => {});
         return;
       }
 
       transportRef.current = transport;
+
+      const outCtx = new AudioContext();
+      await outCtx.resume();
+      outputCtxRef.current = outCtx;
+
+      const outputAnalyser = outCtx.createAnalyser();
+      outputAnalyser.fftSize = 256;
+      const outputGain = outCtx.createGain();
+
+      transport.setupAudioOutput(outCtx, outputAnalyser, outputGain);
+
+      setAudioNodes({ sourceAnalyser, outputAnalyser, sourceGain, outputGain });
       setConnected(true);
 
-      if (audioSource.type === "file" && fileDurationMs != null) {
+      if (audioSource.type === "sample" && fileDurationMs != null) {
         const track = inputStream.getAudioTracks()[0];
         let audioEndSent = false;
         const sendAudioEnd = () => {
@@ -172,5 +240,5 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     };
   }, [options?.sessionId]);
 
-  return { connected, muted, liveStats, transcripts, stop, toggleMute };
+  return { connected, muted, liveStats, transcripts, audioNodes, stop, toggleMute };
 }

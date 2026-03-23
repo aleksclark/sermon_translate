@@ -8,6 +8,7 @@ export class WebRTCTransport implements StreamTransport {
   private audioEl: HTMLAudioElement | null = null;
   private eventCallbacks: ((event: TransportEvent) => void)[] = [];
   private closeCallbacks: (() => void)[] = [];
+  private outputSourceNode: MediaStreamAudioSourceNode | null = null;
 
   constructor(
     private sessionId: string,
@@ -26,12 +27,8 @@ export class WebRTCTransport implements StreamTransport {
     this.pc.ontrack = (ev) => {
       const audio = document.createElement("audio");
       audio.autoplay = true;
+      audio.muted = true;
       audio.srcObject = ev.streams[0] ?? new MediaStream([ev.track]);
-      if (this.outputDeviceId && "setSinkId" in audio) {
-        (audio as unknown as { setSinkId: (id: string) => Promise<void> })
-          .setSinkId(this.outputDeviceId)
-          .catch(() => {});
-      }
       audio.play().catch(() => {});
       this.audioEl = audio;
     };
@@ -79,6 +76,23 @@ export class WebRTCTransport implements StreamTransport {
     await dcOpen;
   }
 
+  setupAudioOutput(
+    ctx: AudioContext,
+    analyser: AnalyserNode,
+    gain: GainNode,
+  ): void {
+    if (!this.audioEl) return;
+
+    const source = ctx.createMediaStreamSource(
+      this.audioEl.srcObject as MediaStream,
+    );
+    this.outputSourceNode = source;
+
+    source.connect(analyser);
+    source.connect(gain);
+    gain.connect(ctx.destination);
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   sendAudio(_data: ArrayBuffer): void {
     // no-op: WebRTC handles audio natively via addTrack
@@ -91,7 +105,7 @@ export class WebRTCTransport implements StreamTransport {
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   onAudio(_cb: (data: ArrayBuffer) => void): void {
-    // no-op: WebRTC playback via <audio> element
+    // no-op: WebRTC playback via audio output chain
   }
 
   onEvent(cb: (event: TransportEvent) => void): void {
@@ -111,6 +125,8 @@ export class WebRTCTransport implements StreamTransport {
   close(): void {
     this.dc?.close();
     this.dc = null;
+    this.outputSourceNode?.disconnect();
+    this.outputSourceNode = null;
     if (this.audioEl) {
       this.audioEl.srcObject = null;
       this.audioEl = null;

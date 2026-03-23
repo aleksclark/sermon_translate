@@ -17,6 +17,7 @@ import { ServerStatsPanel } from "./components/ServerStatsPanel.tsx";
 import { SessionListPanel } from "./components/SessionListPanel.tsx";
 import { NewSessionModal } from "./components/NewSessionModal.tsx";
 import { ActiveSessionPanel } from "./components/ActiveSessionPanel.tsx";
+import { AudioMonitorPanel } from "./components/AudioMonitorPanel.tsx";
 import { useServerStats } from "./hooks/useServerStats.ts";
 import { useSessions } from "./hooks/useSessions.ts";
 import { useAudioStream } from "./hooks/useAudioStream.ts";
@@ -67,7 +68,7 @@ function AppContent() {
     };
   }, [activeSession]);
 
-  const { connected, muted, liveStats, transcripts, stop, toggleMute } = useAudioStream(streamOptions);
+  const { connected, liveStats, transcripts, audioNodes, stop } = useAudioStream(streamOptions);
 
   const streamLabels = useMemo(() => {
     if (!activeSession) return {};
@@ -78,6 +79,14 @@ function AppContent() {
       }
     }
     return labels;
+  }, [activeSession]);
+
+  const sourceLabel = useMemo(() => {
+    if (!activeSession) return "Source Audio";
+    if (activeSession.audioSource.type === "sample" && activeSession.audioSource.sampleFilename) {
+      return activeSession.audioSource.sampleFilename;
+    }
+    return "Microphone";
   }, [activeSession]);
 
   const handleCreated = (
@@ -124,17 +133,21 @@ function AppContent() {
           <Grid.Col span={{ base: 12, md: 8 }}>
             <Stack gap="md">
               {activeSession && (
-                <ActiveSessionPanel
-                  sessionId={activeSession.session.id}
-                  pipelineId={activeSession.session.pipeline_id}
-                  connected={connected}
-                  muted={muted}
-                  liveStats={liveStats}
-                  transcripts={transcripts}
-                  streamLabels={streamLabels}
-                  onStop={handleStop}
-                  onToggleMute={toggleMute}
-                />
+                <>
+                  <AudioMonitorPanel
+                    audioNodes={audioNodes}
+                    sourceLabel={sourceLabel}
+                  />
+                  <ActiveSessionPanel
+                    sessionId={activeSession.session.id}
+                    pipelineId={activeSession.session.pipeline_id}
+                    connected={connected}
+                    liveStats={liveStats}
+                    transcripts={transcripts}
+                    streamLabels={streamLabels}
+                    onStop={handleStop}
+                  />
+                </>
               )}
             </Stack>
           </Grid.Col>

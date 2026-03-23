@@ -9,6 +9,7 @@ from src.api.deps import get_pipeline_registry, get_server_stats, get_session_st
 from src.models import SessionStatus
 from src.pipelines.base import OutputStreamKind
 from src.transport.base import EventType, TransportConnection, TransportEvent
+from src.transport.rtc import WebRTCTransport
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,17 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
 
     session.status = SessionStatus.ACTIVE
     await pipeline.start()
+
+    # Drain any audio that arrived during signaling + model loading
+    # so the pipeline starts from "now", not from a stale backlog.
+    if isinstance(transport, WebRTCTransport):
+        drained = transport.drain_audio_backlog()
+        if drained > 0:
+            logger.info(
+                "drained %d bytes of backlogged audio for session %s",
+                drained, session_id,
+            )
+
     await transport.send_event(
         TransportEvent(type=EventType.SESSION_START, session_id=session_id)
     )
@@ -46,6 +58,7 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
 
     try:
         audio_queues: list[asyncio.Queue[bytes | None]] = []
+        first_output_time: float | None = None
 
         async def audio_input() -> None:
             async for chunk in transport.recv_audio():
@@ -67,12 +80,15 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
                 yield item
 
         async def forward_audio(stream: AsyncIterator[bytes]) -> None:
+            nonlocal first_output_time
             async for chunk in pipeline.process(stream, session=session):
                 if stop_event.is_set():
                     break
                 session.stats.bytes_sent += len(chunk)
                 session.stats.chunks_sent += 1
                 stats_tracker.total_bytes_processed += len(chunk)
+                if first_output_time is None:
+                    first_output_time = time.monotonic()
                 await transport.send_audio(chunk)
 
         async def forward_text(name: str, stream: AsyncIterator[bytes]) -> None:
@@ -90,8 +106,22 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
 
         async def stats_loop() -> None:
             while session.status == SessionStatus.ACTIVE and not stop_event.is_set():
-                session.stats.duration_seconds = round(time.monotonic() - start_time, 1)
-                session.stats.pipeline_latency_ms = 5000.0
+                now = time.monotonic()
+                session.stats.duration_seconds = round(now - start_time, 1)
+
+                input_s = session.stats.bytes_received / (session.sample_rate * 2)
+                output_played_s = 0.0
+                if first_output_time is not None:
+                    output_played_s = now - first_output_time
+                    if isinstance(transport, WebRTCTransport):
+                        output_played_s = max(
+                            output_played_s - transport.output_track.queued_seconds,
+                            0.0,
+                        )
+                delay = max(input_s - output_played_s, 0.0)
+                session.stats.audio_delay_seconds = round(delay, 2)
+                session.stats.pipeline_latency_ms = round(delay * 1000, 1)
+
                 await transport.send_event(
                     TransportEvent(
                         type=EventType.SESSION_STATS,

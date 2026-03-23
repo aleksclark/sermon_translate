@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ActionIcon, Badge, Button, Card, Group, ScrollArea, Stack, Text, Title, Tooltip } from "@mantine/core";
-import { IconVolume, IconVolumeOff } from "@tabler/icons-react";
+import { Badge, Button, Card, Group, ScrollArea, Stack, Text, Title } from "@mantine/core";
 import type { SessionStats } from "../api/index.ts";
 import type { TranscriptLine } from "../hooks/useAudioStream.ts";
 
@@ -47,22 +46,18 @@ export function ActiveSessionPanel({
   sessionId,
   pipelineId,
   connected,
-  muted,
   liveStats,
   transcripts,
   streamLabels,
   onStop,
-  onToggleMute,
 }: {
   sessionId: string;
   pipelineId: string;
   connected: boolean;
-  muted: boolean;
   liveStats: SessionStats | null;
   transcripts: Record<string, TranscriptLine[]>;
   streamLabels: Record<string, string>;
   onStop: () => void;
-  onToggleMute: () => void;
 }) {
   const streamNames = Object.keys(transcripts);
 
@@ -91,14 +86,9 @@ export function ActiveSessionPanel({
             <Text size="sm">
               Audio Out: {bytes(liveStats.bytes_sent)} ({liveStats.chunks_sent} chunks)
             </Text>
-            <Text size="sm">
-              Pipeline Latency: {liveStats.pipeline_latency_ms.toFixed(0)}ms
+            <Text size="sm" fw={600} c={liveStats.audio_delay_seconds > 10 ? "red" : liveStats.audio_delay_seconds > 5 ? "yellow" : undefined}>
+              Audio Delay: {liveStats.audio_delay_seconds.toFixed(2)}s
             </Text>
-            {liveStats.audio_delay_seconds > 0 && (
-              <Text size="sm" c={liveStats.audio_delay_seconds > 5 ? "red" : liveStats.audio_delay_seconds > 2 ? "yellow" : undefined}>
-                Audio Delay: {liveStats.audio_delay_seconds.toFixed(1)}s
-              </Text>
-            )}
           </>
         )}
 
@@ -115,17 +105,6 @@ export function ActiveSessionPanel({
         )}
 
         <Group justify="flex-end" mt="xs">
-          <Tooltip label={muted ? "Unmute" : "Mute"}>
-            <ActionIcon
-              variant="light"
-              color={muted ? "red" : "gray"}
-              size="lg"
-              onClick={onToggleMute}
-              aria-label={muted ? "Unmute audio" : "Mute audio"}
-            >
-              {muted ? <IconVolumeOff size={20} /> : <IconVolume size={20} />}
-            </ActionIcon>
-          </Tooltip>
           <Button color="red" variant="outline" onClick={onStop}>
             Stop
           </Button>

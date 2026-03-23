@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import io
 import logging
+import re
 
 import av
 import numpy as np
@@ -13,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 EDGE_TTS_SAMPLE_RATE = 24000
 EDGE_TTS_VOICE = "es-ES-AlvaroNeural"
+
+_SENTENCE_END = re.compile(r"[.!?][\"\'\)\]]*\s*$")
+_CLAUSE_END = re.compile(r",[\"\'\)\]]*\s*$")
 
 
 def downsample(audio: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
@@ -66,3 +70,52 @@ async def synthesize_spanish(text: str, target_rate: int) -> bytes:
     except Exception:
         logger.exception("MP3 decode failed")
         return b""
+
+
+class SentenceAccumulator:
+    """Buffer Whisper segments and flush at natural pause points.
+
+    Segments ending with sentence-final punctuation (``.``, ``?``, ``!``)
+    are always flushed.  Comma-terminated clauses are flushed when
+    ``flush_on_comma`` is True (the default), producing more frequent,
+    shorter audio chunks that align with natural speech pauses.
+    Incomplete trailing text is carried over and prepended to the next
+    buffer's output.  Call ``flush()`` at end-of-stream to emit any
+    remaining text.
+    """
+
+    def __init__(self, *, flush_on_comma: bool = True) -> None:
+        self._carry = ""
+        self._flush_on_comma = flush_on_comma
+
+    def push(self, segments: list[str]) -> list[str]:
+        """Accept new ASR segments, return complete clauses/sentences to emit."""
+        if not segments:
+            return []
+
+        joined = " ".join(segments)
+        text = (self._carry + " " + joined).strip() if self._carry else joined
+        self._carry = ""
+
+        split_pat = r"(?<=[.!?,])\s+" if self._flush_on_comma else r"(?<=[.!?])\s+"
+        sentences: list[str] = []
+        for part in re.split(split_pat, text):
+            part = part.strip()
+            if not part:
+                continue
+            if _SENTENCE_END.search(part) or (
+                self._flush_on_comma and _CLAUSE_END.search(part)
+            ):
+                sentences.append(part)
+            else:
+                self._carry = part
+
+        return sentences
+
+    def flush(self) -> list[str]:
+        """Emit any remaining text at end-of-stream."""
+        if self._carry.strip():
+            text = self._carry.strip()
+            self._carry = ""
+            return [text]
+        return []

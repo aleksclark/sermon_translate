@@ -1,5 +1,6 @@
 import type {
   PipelineInfo,
+  SampleInfo,
   ServerStats,
   Session,
   SessionCreate,
@@ -21,6 +22,10 @@ export async function fetchServerStats(): Promise<ServerStats> {
 
 export async function fetchPipelines(): Promise<PipelineInfo[]> {
   return json<PipelineInfo[]>(await fetch(`${BASE}/pipelines`));
+}
+
+export async function fetchSamples(): Promise<SampleInfo[]> {
+  return json<SampleInfo[]>(await fetch(`${BASE}/samples`));
 }
 
 export async function fetchSessions(): Promise<Session[]> {

@@ -17,6 +17,7 @@ from pydantic import TypeAdapter
 from src.models import (
     OutputStreamInfo,
     PipelineInfo,
+    SampleInfo,
     ServerStats,
     Session,
     SessionCreate,
@@ -29,6 +30,7 @@ SHARED_MODELS: list[type] = [
     SessionStatus,
     OutputStreamInfo,
     PipelineInfo,
+    SampleInfo,
     SessionCreate,
     SessionUpdate,
     SessionStats,

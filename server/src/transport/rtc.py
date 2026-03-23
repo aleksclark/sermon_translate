@@ -39,6 +39,7 @@ class OutputAudioTrack(MediaStreamTrack):
         self._leftover = b""
         self._started = False
         self._start_time = 0.0
+        self._total_pushed_bytes = 0
 
     async def recv(self) -> AudioFrame:  # type: ignore[override]
         frame_bytes = self._samples_per_frame * 2  # s16le = 2 bytes/sample
@@ -86,6 +87,7 @@ class OutputAudioTrack(MediaStreamTrack):
         return frame
 
     def push(self, data: bytes) -> None:
+        self._total_pushed_bytes += len(data)
         self._queue.put_nowait(data)
 
     def finish(self) -> None:
@@ -94,6 +96,13 @@ class OutputAudioTrack(MediaStreamTrack):
     @property
     def queued_bytes(self) -> int:
         return self._queue.qsize()
+
+    @property
+    def queued_seconds(self) -> float:
+        """Estimate seconds of audio buffered but not yet played."""
+        played_bytes = self._pts * 2  # pts is in samples, 2 bytes per sample
+        buffered = self._total_pushed_bytes - played_bytes + len(self._leftover)
+        return max(buffered, 0) / (self._sample_rate * 2)
 
 
 class WebRTCTransport(TransportConnection):
@@ -190,6 +199,23 @@ class WebRTCTransport(TransportConnection):
     # ------------------------------------------------------------------
     # TransportConnection interface
     # ------------------------------------------------------------------
+
+    def drain_audio_backlog(self) -> int:
+        """Discard any audio chunks queued before the pipeline was ready.
+
+        Returns the total number of bytes drained.
+        """
+        drained = 0
+        while not self._audio_queue.empty():
+            try:
+                chunk = self._audio_queue.get_nowait()
+                if chunk == b"":
+                    self._audio_queue.put_nowait(b"")
+                    break
+                drained += len(chunk)
+            except asyncio.QueueEmpty:
+                break
+        return drained
 
     async def recv_audio(self) -> AsyncIterator[bytes]:
         while True:

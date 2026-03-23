@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from src.api import SessionStore, init_deps
 from src.api import router as api_router
@@ -52,6 +53,10 @@ def create_app() -> FastAPI:
     init_deps(store, registry, stats)
 
     app.include_router(api_router)
+
+    samples_dir = Path(__file__).resolve().parent.parent / "samples"
+    if samples_dir.is_dir():
+        app.mount("/api/samples", StaticFiles(directory=str(samples_dir)), name="samples")
 
     return app
 

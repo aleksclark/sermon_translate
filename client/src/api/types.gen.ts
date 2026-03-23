@@ -15,6 +15,11 @@ export interface PipelineInfo {
   output_streams: OutputStreamInfo[];
 }
 
+export interface SampleInfo {
+  filename: string;
+  url: string;
+}
+
 export interface SessionCreate {
   pipeline_id: string;
   sample_rate?: number;

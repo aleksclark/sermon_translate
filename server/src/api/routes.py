@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
 from src.models import (
     PipelineInfo,
     RTCOffer,
+    SampleInfo,
     ServerStats,
     Session,
     SessionCreate,
@@ -16,9 +18,22 @@ from src.models import (
 
 from .deps import get_pipeline_registry, get_server_stats, get_session_store
 
+SAMPLES_DIR = Path(__file__).resolve().parent.parent.parent / "samples"
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
+
+
+@router.get("/samples", response_model=list[SampleInfo])
+async def list_samples() -> list[SampleInfo]:
+    if not SAMPLES_DIR.is_dir():
+        return []
+    samples = []
+    for p in sorted(SAMPLES_DIR.iterdir()):
+        if p.suffix.lower() in (".mp3", ".wav", ".ogg", ".flac"):
+            samples.append(SampleInfo(filename=p.name, url=f"/api/samples/{p.name}"))
+    return samples
 
 
 @router.get("/stats", response_model=ServerStats)

@@ -40,6 +40,11 @@ class SessionUpdate(BaseModel):
     status: SessionStatus | None = None
 
 
+class SampleInfo(BaseModel):
+    filename: str
+    url: str
+
+
 class RTCOffer(BaseModel):
     sdp: str
     type: str

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Button,
-  FileButton,
   Group,
+  Loader,
   Modal,
   NativeSelect,
   NumberInput,
@@ -11,15 +11,16 @@ import {
   Text,
   TextInput,
 } from "@mantine/core";
-import { createSession, fetchPipelines } from "../api/index.ts";
-import type { PipelineInfo, Session } from "../api/index.ts";
+import { createSession, fetchPipelines, fetchSamples } from "../api/index.ts";
+import type { PipelineInfo, SampleInfo, Session } from "../api/index.ts";
 import { useAudioDevices } from "../hooks/useAudioDevices.ts";
 
-export type AudioSourceType = "mic" | "file";
+export type AudioSourceType = "mic" | "sample";
 
 export interface AudioSource {
   type: AudioSourceType;
-  file?: File;
+  sampleUrl?: string;
+  sampleFilename?: string;
 }
 
 export function NewSessionModal({
@@ -38,15 +39,16 @@ export function NewSessionModal({
   ) => void;
 }) {
   const [pipelines, setPipelines] = useState<PipelineInfo[]>([]);
+  const [samples, setSamples] = useState<SampleInfo[]>([]);
+  const [loadingSamples, setLoadingSamples] = useState(false);
   const [selectedPipeline, setSelectedPipeline] = useState("");
+  const [selectedSample, setSelectedSample] = useState("");
   const [label, setLabel] = useState("");
   const [inputDevice, setInputDevice] = useState("");
   const [outputDevice, setOutputDevice] = useState("");
   const [creating, setCreating] = useState(false);
-  const [sourceType, setSourceType] = useState<AudioSourceType>("mic");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [sourceType, setSourceType] = useState<AudioSourceType>("sample");
   const [audioContextSeconds, setAudioContextSeconds] = useState<number>(0);
-  const resetRef = useRef<() => void>(null);
   const { inputs, outputs } = useAudioDevices();
 
   useEffect(() => {
@@ -55,6 +57,13 @@ export function NewSessionModal({
       setPipelines(p);
       if (p.length > 0) setSelectedPipeline(p[0].id);
     });
+    setLoadingSamples(true);
+    fetchSamples()
+      .then((s) => {
+        setSamples(s);
+        if (s.length > 0) setSelectedSample(s[0].url);
+      })
+      .finally(() => setLoadingSamples(false));
   }, [opened]);
 
   useEffect(() => {
@@ -74,13 +83,12 @@ export function NewSessionModal({
         label: label || undefined,
         audio_context_seconds: audioContextSeconds || undefined,
       });
+      const sample = samples.find((s) => s.url === selectedSample);
       const source: AudioSource =
-        sourceType === "file" && selectedFile
-          ? { type: "file", file: selectedFile }
+        sourceType === "sample" && sample
+          ? { type: "sample", sampleUrl: sample.url, sampleFilename: sample.filename }
           : { type: "mic" };
       setLabel("");
-      setSelectedFile(null);
-      resetRef.current?.();
       onCreated(session, selected!, inputDevice, outputDevice, source);
       onClose();
     } finally {
@@ -113,8 +121,8 @@ export function NewSessionModal({
         <SegmentedControl
           fullWidth
           data={[
+            { value: "sample", label: "Server Sample" },
             { value: "mic", label: "Live Microphone" },
-            { value: "file", label: "MP3 File" },
           ]}
           value={sourceType}
           onChange={(v) => setSourceType(v as AudioSourceType)}
@@ -130,23 +138,20 @@ export function NewSessionModal({
             value={inputDevice}
             onChange={(e) => setInputDevice(e.currentTarget.value)}
           />
-        ) : (
-          <Group gap="sm">
-            <FileButton
-              resetRef={resetRef}
-              onChange={(f) => setSelectedFile(f)}
-              accept="audio/mpeg,audio/mp3,.mp3"
-            >
-              {(props) => (
-                <Button variant="light" {...props}>
-                  Choose MP3 file
-                </Button>
-              )}
-            </FileButton>
-            <Text size="sm" c="dimmed" style={{ flex: 1 }}>
-              {selectedFile ? selectedFile.name : "No file selected"}
-            </Text>
+        ) : loadingSamples ? (
+          <Group justify="center" py="sm">
+            <Loader size="sm" />
+            <Text size="sm" c="dimmed">Loading samples…</Text>
           </Group>
+        ) : samples.length === 0 ? (
+          <Text size="sm" c="dimmed">No samples available on server</Text>
+        ) : (
+          <NativeSelect
+            label="Audio Sample"
+            data={samples.map((s) => ({ value: s.url, label: s.filename }))}
+            value={selectedSample}
+            onChange={(e) => setSelectedSample(e.currentTarget.value)}
+          />
         )}
         <NativeSelect
           label="Audio Output"
@@ -175,7 +180,7 @@ export function NewSessionModal({
           <Button
             onClick={handleCreate}
             loading={creating}
-            disabled={!selectedPipeline || (sourceType === "file" && !selectedFile)}
+            disabled={!selectedPipeline || (sourceType === "sample" && !selectedSample)}
           >
             Start Session
           </Button>
