@@ -1,0 +1,5 @@
+{
+  "audio_file": "../../../../e2e/fixtures/test-speech.mp3",
+  "en_reference": "The grace of God is sufficient for all.",
+  "es_reference": "La gracia de Dios es suficiente para todos."
+}
