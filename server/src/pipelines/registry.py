@@ -64,6 +64,12 @@ def create_default_registry() -> PipelineRegistry:
     except ImportError:
         logger.info("SimulStreaming deps missing, skipping")
     try:
+        from src.pipelines.simul_streaming_vc import SimulStreamingVoiceClonePipeline
+
+        registry.register(SimulStreamingVoiceClonePipeline())
+    except ImportError:
+        logger.info("F5-TTS not installed, skipping voice clone pipeline")
+    try:
         from src.pipelines.gpu_pipelines import (
             GPUS2STPipeline,
             GPUWhisperOpusPipeline,

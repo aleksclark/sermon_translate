@@ -58,6 +58,8 @@ class SessionStats(BaseModel):
     duration_seconds: float = 0.0
     pipeline_latency_ms: float = 0.0
     audio_delay_seconds: float = 0.0
+    pending_sentences: int = 0
+    queued_audio_seconds: float = 0.0
 
 
 class Session(BaseModel):

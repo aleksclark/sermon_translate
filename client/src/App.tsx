@@ -68,7 +68,7 @@ function AppContent() {
     };
   }, [activeSession]);
 
-  const { connected, liveStats, transcripts, audioNodes, stop } = useAudioStream(streamOptions);
+  const { connected, liveStats, transcripts, audioNodes, rtcMetrics, pipelineStatus, stop } = useAudioStream(streamOptions);
 
   const streamLabels = useMemo(() => {
     if (!activeSession) return {};
@@ -145,6 +145,8 @@ function AppContent() {
                     liveStats={liveStats}
                     transcripts={transcripts}
                     streamLabels={streamLabels}
+                    rtcMetrics={rtcMetrics}
+                    pipelineStatus={pipelineStatus}
                     onStop={handleStop}
                   />
                 </>

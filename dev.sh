@@ -17,7 +17,7 @@ tmux send-keys -t "$SESSION" \
 # Client pane
 tmux split-window -h -t "$SESSION" -c "$ROOT/client"
 tmux send-keys -t "$SESSION" \
-    "[ -d node_modules ] || pnpm install; pnpm dev" Enter
+    "[ -d node_modules ] || pnpm install; pnpm dev --host 0.0.0.0" Enter
 
 tmux select-pane -t "$SESSION:.0"
 exec tmux attach-session -t "$SESSION"

@@ -1,6 +1,17 @@
 import type { StreamTransport, TransportEvent } from "./base.ts";
 
 const ICE_GATHER_TIMEOUT_MS = 2_000;
+const STATS_INTERVAL_MS = 2_000;
+
+export interface WebRTCMetrics {
+  connectionState: string;
+  iceState: string;
+  roundTripMs: number | null;
+  jitterMs: number | null;
+  packetsLost: number;
+  bytesReceived: number;
+  bytesSent: number;
+}
 
 export class WebRTCTransport implements StreamTransport {
   private pc: RTCPeerConnection | null = null;
@@ -9,6 +20,8 @@ export class WebRTCTransport implements StreamTransport {
   private eventCallbacks: ((event: TransportEvent) => void)[] = [];
   private closeCallbacks: (() => void)[] = [];
   private outputSourceNode: MediaStreamAudioSourceNode | null = null;
+  private metricsCallbacks: ((m: WebRTCMetrics) => void)[] = [];
+  private metricsTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     private sessionId: string,
@@ -50,10 +63,13 @@ export class WebRTCTransport implements StreamTransport {
     });
 
     this.pc.onconnectionstatechange = () => {
+      this.pollMetrics();
       if (this.pc?.connectionState === "failed" || this.pc?.connectionState === "disconnected") {
         for (const cb of this.closeCallbacks) cb();
       }
     };
+
+    this.pc.oniceconnectionstatechange = () => this.pollMetrics();
 
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
@@ -74,6 +90,8 @@ export class WebRTCTransport implements StreamTransport {
     await this.pc.setRemoteDescription(new RTCSessionDescription(answer));
 
     await dcOpen;
+
+    this.metricsTimer = setInterval(() => this.pollMetrics(), STATS_INTERVAL_MS);
   }
 
   setupAudioOutput(
@@ -116,6 +134,10 @@ export class WebRTCTransport implements StreamTransport {
     this.closeCallbacks.push(cb);
   }
 
+  onMetrics(cb: (m: WebRTCMetrics) => void): void {
+    this.metricsCallbacks.push(cb);
+  }
+
   setMuted(muted: boolean): void {
     if (this.audioEl) {
       this.audioEl.muted = muted;
@@ -123,6 +145,10 @@ export class WebRTCTransport implements StreamTransport {
   }
 
   close(): void {
+    if (this.metricsTimer) {
+      clearInterval(this.metricsTimer);
+      this.metricsTimer = null;
+    }
     this.dc?.close();
     this.dc = null;
     this.outputSourceNode?.disconnect();
@@ -133,6 +159,37 @@ export class WebRTCTransport implements StreamTransport {
     }
     this.pc?.close();
     this.pc = null;
+  }
+
+  private pollMetrics(): void {
+    if (!this.pc) return;
+    const m: WebRTCMetrics = {
+      connectionState: this.pc.connectionState,
+      iceState: this.pc.iceConnectionState,
+      roundTripMs: null,
+      jitterMs: null,
+      packetsLost: 0,
+      bytesReceived: 0,
+      bytesSent: 0,
+    };
+    this.pc.getStats().then((stats) => {
+      stats.forEach((report) => {
+        if (report.type === "candidate-pair" && report.state === "succeeded") {
+          m.roundTripMs = report.currentRoundTripTime != null
+            ? Math.round(report.currentRoundTripTime * 1000)
+            : null;
+        }
+        if (report.type === "inbound-rtp" && report.kind === "audio") {
+          m.jitterMs = report.jitter != null ? Math.round(report.jitter * 1000) : null;
+          m.packetsLost = report.packetsLost ?? 0;
+          m.bytesReceived = report.bytesReceived ?? 0;
+        }
+        if (report.type === "outbound-rtp" && report.kind === "audio") {
+          m.bytesSent = report.bytesSent ?? 0;
+        }
+      });
+      for (const cb of this.metricsCallbacks) cb(m);
+    }).catch(() => {});
   }
 
   private waitForIceGathering(): Promise<void> {

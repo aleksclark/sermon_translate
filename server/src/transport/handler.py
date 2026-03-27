@@ -14,6 +14,14 @@ from src.transport.rtc import WebRTCTransport
 logger = logging.getLogger(__name__)
 
 
+def _status(session_id: str, phase: str, detail: str = "") -> TransportEvent:
+    return TransportEvent(
+        type=EventType.PIPELINE_STATUS,
+        session_id=session_id,
+        payload={"phase": phase, "detail": detail},
+    )
+
+
 async def run_session(transport: TransportConnection, session_id: str) -> None:
     """Transport-agnostic session lifecycle."""
     store = get_session_store()
@@ -35,11 +43,28 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
         await transport.close()
         return
 
-    session.status = SessionStatus.ACTIVE
-    await pipeline.start()
+    await transport.send_event(
+        _status(session_id, "loading", f"Loading pipeline {session.pipeline_id}…"),
+    )
 
-    # Drain any audio that arrived during signaling + model loading
-    # so the pipeline starts from "now", not from a stale backlog.
+    session.status = SessionStatus.ACTIVE
+    try:
+        await pipeline.start()
+    except Exception as exc:
+        logger.exception("pipeline start failed for %s", session_id)
+        await transport.send_event(
+            _status(session_id, "error", f"Pipeline failed to start: {exc}"),
+        )
+        await transport.send_event(
+            TransportEvent(
+                type=EventType.ERROR,
+                session_id=session_id,
+                payload={"detail": f"Pipeline start failed: {exc}"},
+            ),
+        )
+        await transport.close()
+        return
+
     if isinstance(transport, WebRTCTransport):
         drained = transport.drain_audio_backlog()
         if drained > 0:
@@ -49,7 +74,10 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
             )
 
     await transport.send_event(
-        TransportEvent(type=EventType.SESSION_START, session_id=session_id)
+        _status(session_id, "ready", "Pipeline ready, streaming audio"),
+    )
+    await transport.send_event(
+        TransportEvent(type=EventType.SESSION_START, session_id=session_id),
     )
 
     stats_tracker = get_server_stats()
@@ -101,7 +129,7 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
                         type=EventType.PIPELINE_EVENT,
                         session_id=session_id,
                         payload={"kind": "transcript", "stream": name, "text": text},
-                    )
+                    ),
                 )
 
         async def stats_loop() -> None:
@@ -122,12 +150,16 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
                 session.stats.audio_delay_seconds = round(delay, 2)
                 session.stats.pipeline_latency_ms = round(delay * 1000, 1)
 
+                ps, qa = pipeline.get_buffer_stats()
+                session.stats.pending_sentences = ps
+                session.stats.queued_audio_seconds = round(qa, 2)
+
                 await transport.send_event(
                     TransportEvent(
                         type=EventType.SESSION_STATS,
                         session_id=session_id,
                         payload=session.stats.model_dump(),
-                    )
+                    ),
                 )
                 await asyncio.sleep(1)
 
@@ -157,7 +189,9 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
             elif desc.kind == OutputStreamKind.TEXT:
                 q: asyncio.Queue[bytes | None] = asyncio.Queue()
                 audio_queues.append(q)
-                tasks.append(asyncio.ensure_future(forward_text(desc.name, queue_iter(q))))
+                tasks.append(
+                    asyncio.ensure_future(forward_text(desc.name, queue_iter(q))),
+                )
 
         if has_audio:
             q_audio: asyncio.Queue[bytes | None] = asyncio.Queue()
@@ -169,17 +203,20 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
     except Exception:
         logger.exception("stream error for session %s", session_id)
         await transport.send_event(
+            _status(session_id, "error", "Stream processing error"),
+        )
+        await transport.send_event(
             TransportEvent(
                 type=EventType.ERROR,
                 session_id=session_id,
                 payload={"detail": "stream error"},
-            )
+            ),
         )
     finally:
         session.status = SessionStatus.CLOSED
         session.stats.duration_seconds = round(time.monotonic() - start_time, 1)
         await pipeline.stop()
         await transport.send_event(
-            TransportEvent(type=EventType.SESSION_STOP, session_id=session_id)
+            TransportEvent(type=EventType.SESSION_STOP, session_id=session_id),
         )
         await transport.close()

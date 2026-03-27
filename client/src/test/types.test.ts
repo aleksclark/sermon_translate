@@ -28,6 +28,8 @@ describe("generated types", () => {
         duration_seconds: 0,
         pipeline_latency_ms: 0,
         audio_delay_seconds: 0,
+        pending_sentences: 0,
+        queued_audio_seconds: 0,
       },
     };
     expect(session.id).toBe("abc");

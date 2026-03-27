@@ -1,7 +1,9 @@
 import { useEffect, useRef } from "react";
-import { Badge, Button, Card, Group, ScrollArea, Stack, Text, Title } from "@mantine/core";
+import { Alert, Badge, Button, Card, Group, Loader, ScrollArea, Stack, Text, Title } from "@mantine/core";
+import { IconAlertTriangle } from "@tabler/icons-react";
 import type { SessionStats } from "../api/index.ts";
-import type { TranscriptLine } from "../hooks/useAudioStream.ts";
+import type { PipelineStatus, TranscriptLine } from "../hooks/useAudioStream.ts";
+import type { WebRTCMetrics } from "../transport/index.ts";
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -42,6 +44,27 @@ function TranscriptBox({ label, lines }: { label: string; lines: TranscriptLine[
   );
 }
 
+function phaseBadge(status: PipelineStatus): { color: string; label: string } {
+  switch (status.phase) {
+    case "connecting": return { color: "yellow", label: "Connecting" };
+    case "loading": return { color: "blue", label: "Loading Models" };
+    case "ready": return { color: "green", label: "Ready" };
+    case "streaming": return { color: "green", label: "Streaming" };
+    case "error": return { color: "red", label: "Error" };
+    case "stopped": return { color: "gray", label: "Stopped" };
+    default: return { color: "gray", label: status.phase };
+  }
+}
+
+function rtcStateBadge(state: string): { color: string } {
+  switch (state) {
+    case "connected": return { color: "green" };
+    case "connecting": case "new": return { color: "yellow" };
+    case "disconnected": case "failed": case "closed": return { color: "red" };
+    default: return { color: "gray" };
+  }
+}
+
 export function ActiveSessionPanel({
   sessionId,
   pipelineId,
@@ -49,6 +72,8 @@ export function ActiveSessionPanel({
   liveStats,
   transcripts,
   streamLabels,
+  rtcMetrics,
+  pipelineStatus,
   onStop,
 }: {
   sessionId: string;
@@ -57,9 +82,13 @@ export function ActiveSessionPanel({
   liveStats: SessionStats | null;
   transcripts: Record<string, TranscriptLine[]>;
   streamLabels: Record<string, string>;
+  rtcMetrics: WebRTCMetrics | null;
+  pipelineStatus: PipelineStatus;
   onStop: () => void;
 }) {
   const streamNames = Object.keys(transcripts);
+  const phase = phaseBadge(pipelineStatus);
+  const isLoading = pipelineStatus.phase === "connecting" || pipelineStatus.phase === "loading";
 
   return (
     <Card withBorder p="md">
@@ -67,10 +96,34 @@ export function ActiveSessionPanel({
         <Text fw={600} size="lg">
           Active Session
         </Text>
-        <Badge color={connected ? "green" : "gray"}>
-          {connected ? "Streaming" : "Disconnected"}
-        </Badge>
+        <Group gap="xs">
+          {rtcMetrics && (
+            <Badge
+              color={rtcStateBadge(rtcMetrics.connectionState).color}
+              variant="dot"
+              size="sm"
+              title={`ICE: ${rtcMetrics.iceState}`}
+            >
+              RTC {rtcMetrics.connectionState}
+            </Badge>
+          )}
+          <Badge color={phase.color} variant={isLoading ? "outline" : "filled"} size="sm">
+            {isLoading && <Loader size={10} color={phase.color} mr={4} />}
+            {phase.label}
+          </Badge>
+        </Group>
       </Group>
+
+      {pipelineStatus.phase === "error" && (
+        <Alert icon={<IconAlertTriangle size={16} />} color="red" mb="sm" title="Pipeline Error">
+          {pipelineStatus.detail}
+        </Alert>
+      )}
+
+      {isLoading && pipelineStatus.detail && (
+        <Text size="sm" c="dimmed" mb="sm">{pipelineStatus.detail}</Text>
+      )}
+
       <Stack gap="xs">
         <Text size="sm">Session: {sessionId}</Text>
         <Text size="sm">Pipeline: {pipelineId}</Text>
@@ -89,7 +142,31 @@ export function ActiveSessionPanel({
             <Text size="sm" fw={600} c={liveStats.audio_delay_seconds > 10 ? "red" : liveStats.audio_delay_seconds > 5 ? "yellow" : undefined}>
               Audio Delay: {liveStats.audio_delay_seconds.toFixed(2)}s
             </Text>
+            {(liveStats.pending_sentences > 0 || liveStats.queued_audio_seconds > 0) && (
+              <Group gap="md">
+                <Text size="xs" c="dimmed">
+                  Pending: {liveStats.pending_sentences} sentences
+                </Text>
+                <Text size="xs" c="dimmed">
+                  Queued: {liveStats.queued_audio_seconds.toFixed(1)}s audio
+                </Text>
+              </Group>
+            )}
           </>
+        )}
+
+        {rtcMetrics && connected && (
+          <Group gap="md">
+            {rtcMetrics.roundTripMs != null && (
+              <Text size="xs" c="dimmed">RTT: {rtcMetrics.roundTripMs}ms</Text>
+            )}
+            {rtcMetrics.jitterMs != null && (
+              <Text size="xs" c="dimmed">Jitter: {rtcMetrics.jitterMs}ms</Text>
+            )}
+            {rtcMetrics.packetsLost > 0 && (
+              <Text size="xs" c="red">Lost: {rtcMetrics.packetsLost}</Text>
+            )}
+          </Group>
         )}
 
         {streamNames.length > 0 && (

@@ -4,3 +4,6 @@ __pycache__/
 *.egg-info/
 dist/
 src/harness/fixtures/*.wav
+speaker-ref-24k.wav
+src/harness/fixtures/f5_spanish_finetuned.pt
+src/harness/fixtures/speaker-ref-es-24k.wav

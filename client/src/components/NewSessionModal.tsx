@@ -41,7 +41,9 @@ export function NewSessionModal({
   const [pipelines, setPipelines] = useState<PipelineInfo[]>([]);
   const [samples, setSamples] = useState<SampleInfo[]>([]);
   const [loadingSamples, setLoadingSamples] = useState(false);
-  const [selectedPipeline, setSelectedPipeline] = useState("");
+  const [selectedPipeline, setSelectedPipeline] = useState(
+    () => localStorage.getItem("lastPipelineId") || "",
+  );
   const [selectedSample, setSelectedSample] = useState("");
   const [label, setLabel] = useState("");
   const [inputDevice, setInputDevice] = useState("");
@@ -55,7 +57,12 @@ export function NewSessionModal({
     if (!opened) return;
     fetchPipelines().then((p) => {
       setPipelines(p);
-      if (p.length > 0) setSelectedPipeline(p[0].id);
+      const saved = localStorage.getItem("lastPipelineId");
+      if (saved && p.some((pl) => pl.id === saved)) {
+        setSelectedPipeline(saved);
+      } else if (p.length > 0) {
+        setSelectedPipeline(p[0].id);
+      }
     });
     setLoadingSamples(true);
     fetchSamples()
@@ -83,6 +90,7 @@ export function NewSessionModal({
         label: label || undefined,
         audio_context_seconds: audioContextSeconds || undefined,
       });
+      localStorage.setItem("lastPipelineId", selectedPipeline);
       const sample = samples.find((s) => s.url === selectedSample);
       const source: AudioSource =
         sourceType === "sample" && sample

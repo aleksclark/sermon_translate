@@ -41,6 +41,8 @@ export interface SessionStats {
   duration_seconds: number;
   pipeline_latency_ms: number;
   audio_delay_seconds: number;
+  pending_sentences: number;
+  queued_audio_seconds: number;
 }
 
 export interface Session {

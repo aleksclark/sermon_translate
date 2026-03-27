@@ -40,6 +40,7 @@ KNOWN_PIPELINES = [
     ("src.pipelines.moonshine_pipeline", "MoonshineStreamingPipeline"),
     ("src.pipelines.nova_sonic", "NovaSonicPipeline"),
     ("src.pipelines.simul_streaming", "SimulStreamingPipeline"),
+    ("src.pipelines.simul_streaming_vc", "SimulStreamingVoiceClonePipeline"),
     ("src.pipelines.seamless_streaming", "SeamlessStreamingPipeline"),
 ]
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionStats } from "../api/index.ts";
 import type { AudioSource } from "../components/NewSessionModal.tsx";
-import type { TransportEvent } from "../transport/index.ts";
+import type { TransportEvent, WebRTCMetrics } from "../transport/index.ts";
 import { WebRTCTransport } from "../transport/index.ts";
 
 interface AudioStreamOptions {
@@ -17,6 +17,11 @@ export interface TranscriptLine {
   stream: string;
   text: string;
   timestamp: number;
+}
+
+export interface PipelineStatus {
+  phase: "connecting" | "loading" | "ready" | "streaming" | "error" | "stopped";
+  detail: string;
 }
 
 interface SampleMediaStreamResult {
@@ -76,6 +81,11 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     sourceGain: null,
     outputGain: null,
   });
+  const [rtcMetrics, setRtcMetrics] = useState<WebRTCMetrics | null>(null);
+  const [pipelineStatus, setPipelineStatus] = useState<PipelineStatus>({
+    phase: "stopped",
+    detail: "",
+  });
   const transportRef = useRef<WebRTCTransport | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sourceCtxRef = useRef<AudioContext | null>(null);
@@ -101,6 +111,8 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     setMuted(false);
     setLiveStats(null);
     setTranscripts({});
+    setRtcMetrics(null);
+    setPipelineStatus({ phase: "stopped", detail: "" });
     setAudioNodes({
       sourceAnalyser: null,
       outputAnalyser: null,
@@ -124,6 +136,8 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     async function start() {
       const { sessionId, sampleRate, channels, audioSource, inputDeviceId, outputDeviceId } =
         options!;
+
+      setPipelineStatus({ phase: "connecting", detail: "Acquiring audio…" });
 
       let inputStream: MediaStream;
       let fileDurationMs: number | null = null;
@@ -167,12 +181,18 @@ export function useAudioStream(options: AudioStreamOptions | null) {
       streamRef.current = inputStream;
       sourceCtxRef.current = srcCtx;
 
+      setPipelineStatus({ phase: "connecting", detail: "WebRTC signaling…" });
+
       const transport = new WebRTCTransport(sessionId, inputStream, outputDeviceId);
       try {
         await transport.connect();
-      } catch {
+      } catch (err) {
         inputStream.getTracks().forEach((t) => t.stop());
         srcCtx?.close().catch(() => {});
+        setPipelineStatus({
+          phase: "error",
+          detail: `Connection failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
         return;
       }
       if (cancelledRef.current) {
@@ -182,6 +202,8 @@ export function useAudioStream(options: AudioStreamOptions | null) {
       }
 
       transportRef.current = transport;
+
+      setPipelineStatus({ phase: "connecting", detail: "DataChannel open, setting up audio…" });
 
       const outCtx = new AudioContext();
       await outCtx.resume();
@@ -217,6 +239,18 @@ export function useAudioStream(options: AudioStreamOptions | null) {
       transport.onEvent((evt: TransportEvent) => {
         if (evt.type === "session.stats") {
           setLiveStats(evt.payload as unknown as SessionStats);
+        } else if (evt.type === "pipeline.status") {
+          const phase = evt.payload.phase as PipelineStatus["phase"];
+          const detail = (evt.payload.detail as string) || "";
+          setPipelineStatus({ phase, detail });
+          if (phase === "ready") {
+            setPipelineStatus({ phase: "streaming", detail });
+          }
+        } else if (evt.type === "error") {
+          setPipelineStatus({
+            phase: "error",
+            detail: (evt.payload.detail as string) || "Unknown error",
+          });
         } else if (evt.type === "pipeline.event" && evt.payload.kind === "transcript") {
           const streamName = (evt.payload.stream as string) || "transcript";
           const text = evt.payload.text as string;
@@ -230,7 +264,12 @@ export function useAudioStream(options: AudioStreamOptions | null) {
 
       transport.onClose(() => {
         setConnected(false);
+        setPipelineStatus((prev) =>
+          prev.phase === "error" ? prev : { phase: "stopped", detail: "Connection closed" },
+        );
       });
+
+      transport.onMetrics((m) => setRtcMetrics(m));
     }
 
     start();
@@ -240,5 +279,15 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     };
   }, [options?.sessionId]);
 
-  return { connected, muted, liveStats, transcripts, audioNodes, stop, toggleMute };
+  return {
+    connected,
+    muted,
+    liveStats,
+    transcripts,
+    audioNodes,
+    rtcMetrics,
+    pipelineStatus,
+    stop,
+    toggleMute,
+  };
 }

@@ -12,6 +12,7 @@ class EventType(StrEnum):
     SESSION_STOP = "session.stop"
     SESSION_STATS = "session.stats"
     PIPELINE_EVENT = "pipeline.event"
+    PIPELINE_STATUS = "pipeline.status"
     AUDIO_END = "audio.end"
     ERROR = "error"
 

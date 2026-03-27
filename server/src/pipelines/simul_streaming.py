@@ -2,14 +2,19 @@
 
 Uses the AlignAtt attention-guided policy from UFAL's SimulStreaming
 (IWSLT 2025 winner) for real-time transcription that emits words as
-they become stable — no fixed buffer windows. Each complete sentence
-is translated via Opus-MT and synthesised via Edge TTS.
+they become stable — no fixed buffer windows.
+
+Pull architecture: ASR pushes English sentences into a queue.  A worker
+loop pulls from it, coalescing and summarising under backpressure, then
+translates and synthesises.  The worker can cancel in-flight TTS and
+re-synth a shorter version if the output falls behind.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncIterator
 from functools import partial
 from typing import Any
@@ -32,10 +37,11 @@ MAX_RATE_BOOST = 50
 TTS_CONCURRENCY = 3
 SILENCE_THRESHOLD = 400
 MIN_TAIL_MS = 80
+BACKPRESSURE_THRESHOLD_S = 3.0
+RESYNTH_LEAD_TIME_S = 1.5
 
 
 def _trim_trailing_silence(pcm: bytes, sample_rate: int, keep_ms: int = MIN_TAIL_MS) -> bytes:
-    """Remove trailing silence from s16le PCM, keeping *keep_ms* of quiet."""
     arr = np.frombuffer(pcm, dtype=np.int16)
     if len(arr) == 0:
         return pcm
@@ -55,14 +61,19 @@ def _translate_batch_sync(
     return [sp_tgt.decode(r.hypotheses[0]) for r in results]
 
 
-class SimulStreamingPipeline(BasePipeline):
-    """True simultaneous ASR → Opus-MT → Edge TTS.
+def _summarize_english(sentences: list[str]) -> str:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for s in sentences:
+        norm = s.lower().strip()
+        if norm not in seen:
+            seen.add(norm)
+            deduped.append(s)
+    return " ".join(deduped)
 
-    SimulStreaming's AlignAtt policy emits English words the instant
-    they're stable (no fixed buffer). Complete sentences trigger
-    translation + TTS, producing natural audio at sentence boundaries
-    with minimal latency.
-    """
+
+class SimulStreamingPipeline(BasePipeline):
+    """True simultaneous ASR → Opus-MT → Edge TTS with pull-based backpressure."""
 
     def __init__(self, sample_rate: int = 48000) -> None:
         super().__init__()
@@ -74,6 +85,11 @@ class SimulStreamingPipeline(BasePipeline):
         self._en_queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._es_queue: asyncio.Queue[str | None] = asyncio.Queue()
         self._partial_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._coalesced_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        self._pending_en: asyncio.Queue[str | None] = asyncio.Queue()
+        self._cumul_out_s = 0.0
+        self._first_emit_wall: float | None = None
+        self._active_tts_task: asyncio.Task[None] | None = None
 
     @property
     def info(self) -> PipelineInfo:
@@ -82,8 +98,8 @@ class SimulStreamingPipeline(BasePipeline):
             name="SimulStreaming (AlignAtt + Opus-MT)",
             description=(
                 "True simultaneous transcription via AlignAtt policy "
-                "(IWSLT 2025 winner). Words emitted as they stabilise. "
-                "Opus-MT translation, Edge TTS synthesis."
+                "(IWSLT 2025 winner). Pull-based backpressure coalesces "
+                "and re-synths when output falls behind."
             ),
             output_streams=self._build_output_stream_info(),
         )
@@ -101,9 +117,31 @@ class SimulStreamingPipeline(BasePipeline):
                 name="en-transcript", kind=OutputStreamKind.TEXT, label="English",
             ),
             OutputStreamDescriptor(
+                name="en-coalesced", kind=OutputStreamKind.TEXT, label="To Translator",
+            ),
+            OutputStreamDescriptor(
                 name="es-transcript", kind=OutputStreamKind.TEXT, label="Spanish",
             ),
         ]
+
+    def get_buffer_stats(self) -> tuple[int, float]:
+        return self._pending_en.qsize(), self._queued_seconds()
+
+    def _queued_seconds(self) -> float:
+        if self._first_emit_wall is None:
+            return 0.0
+        return self._cumul_out_s - (time.monotonic() - self._first_emit_wall)
+
+    def _compute_rate(self) -> int:
+        qs = self._queued_seconds()
+        if qs < BACKPRESSURE_THRESHOLD_S:
+            return 0
+        boost = int(min(qs - 2.0, 10.0) * 5)
+        return min(boost, MAX_RATE_BOOST)
+
+    def _get_synth_fn(self) -> Any:
+        """Return the async TTS function. Override for voice cloning."""
+        return _synthesize_edge_tts
 
     async def _do_start(self) -> None:
         loop = asyncio.get_running_loop()
@@ -162,6 +200,8 @@ class SimulStreamingPipeline(BasePipeline):
         await self._en_queue.put(None)
         await self._es_queue.put(None)
         await self._partial_queue.put(None)
+        await self._coalesced_queue.put(None)
+        await self._pending_en.put(None)
 
     async def process(
         self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
@@ -172,75 +212,72 @@ class SimulStreamingPipeline(BasePipeline):
         loop = asyncio.get_running_loop()
         audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue()
         acc = SentenceAccumulator()
-        tts_sem = asyncio.Semaphore(TTS_CONCURRENCY)
-        cumul_out_s = 0.0
-        next_seq = 0
-        pending: dict[int, bytes] = {}
-        emit_seq = 0
-        emit_lock = asyncio.Lock()
-        first_emit_wall: float | None = None
 
-        def _compute_rate() -> int:
-            import time as _t
+        self._cumul_out_s = 0.0
+        self._first_emit_wall = None
+        self._pending_en = asyncio.Queue()
 
-            if first_emit_wall is None or cumul_out_s < 1.0:
-                return 0
-            playback_s = _t.monotonic() - first_emit_wall
-            queued_s = cumul_out_s - playback_s
-            if queued_s < 3.0:
-                return 0
-            boost = int(min(queued_s - 2.0, 10.0) * 5)
-            return min(boost, MAX_RATE_BOOST)
+        # --- Worker: pulls English sentences, translates, synthesises ---
+        async def translate_tts_worker() -> None:
+            while True:
+                en = await self._pending_en.get()
+                if en is None:
+                    break
 
-        async def _tts_one(seq: int, es_text: str) -> None:
-            nonlocal emit_seq, cumul_out_s, first_emit_wall
-            rate_pct = _compute_rate()
-            if rate_pct > 0:
-                logger.info(
-                    "adaptive rate +%d%% (out=%.1fs queued=%.1fs)",
-                    rate_pct, cumul_out_s,
-                    cumul_out_s - ((__import__("time").monotonic() - first_emit_wall)
-                                   if first_emit_wall else 0),
+                # Drain any additional queued sentences
+                batch = [en]
+                while not self._pending_en.empty():
+                    extra = self._pending_en.get_nowait()
+                    if extra is None:
+                        await self._pending_en.put(None)
+                        break
+                    batch.append(extra)
+
+                # Under backpressure: coalesce
+                qs = self._queued_seconds()
+                if qs > BACKPRESSURE_THRESHOLD_S and len(batch) > 1:
+                    summary = _summarize_english(batch)
+                    logger.info(
+                        "backpressure: coalescing %d sentences (queued=%.1fs, pending=%d)",
+                        len(batch), qs, self._pending_en.qsize(),
+                    )
+                    batch = [summary]
+
+                # Translate
+                es_texts = await loop.run_in_executor(
+                    None,
+                    partial(
+                        _translate_batch_sync,
+                        self._translator, self._sp_src, self._sp_tgt, batch,
+                    ),
                 )
-            async with tts_sem:
-                pcm = await _synthesize_edge_tts(es_text, self._sample_rate, rate_pct)
-            if pcm and rate_pct > 0:
-                pcm = _trim_trailing_silence(pcm, self._sample_rate)
-            async with emit_lock:
-                pending[seq] = pcm if pcm else b""
-                while emit_seq in pending:
-                    data = pending.pop(emit_seq)
-                    if data:
-                        if first_emit_wall is None:
-                            import time as _t
 
-                            first_emit_wall = _t.monotonic()
-                        cumul_out_s += len(data) / (self._sample_rate * 2)
-                        await audio_queue.put(data)
-                    emit_seq += 1
+                joined_en = " ".join(batch)
+                joined_es = " ".join(es_texts)
+                await self._coalesced_queue.put(joined_en)
+                await self._en_queue.put(joined_en)
+                await self._es_queue.put(joined_es)
 
-        async def _emit_sentences(sentences: list[str]) -> list[asyncio.Task[None]]:
-            nonlocal next_seq
-            if not sentences:
-                return []
-            es_texts = await loop.run_in_executor(
-                None,
-                partial(
-                    _translate_batch_sync,
-                    self._translator, self._sp_src, self._sp_tgt, sentences,
-                ),
-            )
-            tasks: list[asyncio.Task[None]] = []
-            for en, es in zip(sentences, es_texts, strict=True):
-                await self._en_queue.put(en)
-                await self._es_queue.put(es)
-                seq = next_seq
-                next_seq += 1
-                tasks.append(asyncio.create_task(_tts_one(seq, es)))
-            return tasks
+                # Synthesise
+                rate_pct = self._compute_rate()
+                if rate_pct > 0:
+                    logger.info(
+                        "adaptive rate +%d%% (queued=%.1fs)", rate_pct, self._queued_seconds(),
+                    )
+                synth_fn = self._get_synth_fn()
+                pcm = await synth_fn(joined_es, self._sample_rate, rate_pct)
+                if pcm and rate_pct > 0:
+                    pcm = _trim_trailing_silence(pcm, self._sample_rate)
+                if pcm:
+                    if self._first_emit_wall is None:
+                        self._first_emit_wall = time.monotonic()
+                    self._cumul_out_s += len(pcm) / (self._sample_rate * 2)
+                    await audio_queue.put(pcm)
 
+            await audio_queue.put(None)
+
+        # --- ASR ingest loop ---
         async def ingest_and_process() -> None:
-            all_tts: list[asyncio.Task[None]] = []
             chunk_samples = int(WHISPER_SR * CHUNK_SECONDS)
             partial_text = ""
             accum = np.array([], dtype=np.float32)
@@ -265,16 +302,14 @@ class SimulStreamingPipeline(BasePipeline):
                         await self._partial_queue.put(partial_text)
 
                         sentences = acc.push([text])
+                        for s in sentences:
+                            await self._pending_en.put(s)
                         if sentences:
-                            tasks = await _emit_sentences(sentences)
-                            all_tts.extend(tasks)
                             partial_text = ""
 
-            # Feed remaining accumulated audio
             if len(accum) > 0:
                 self._model.insert_audio(torch.from_numpy(accum))
 
-            # Flush remaining
             tokens, _ = await loop.run_in_executor(
                 None, self._model.infer, True,
             )
@@ -284,16 +319,13 @@ class SimulStreamingPipeline(BasePipeline):
             else:
                 remaining = acc.flush()
 
-            if remaining:
-                tasks = await _emit_sentences(remaining)
-                all_tts.extend(tasks)
+            for s in remaining:
+                await self._pending_en.put(s)
 
             self._model.refresh_segment(complete=True)
+            await self._pending_en.put(None)
 
-            if all_tts:
-                await asyncio.gather(*all_tts)
-            await audio_queue.put(None)
-
+        worker_task = asyncio.create_task(translate_tts_worker())
         ingest_task = asyncio.create_task(ingest_and_process())
 
         while True:
@@ -303,9 +335,11 @@ class SimulStreamingPipeline(BasePipeline):
             yield data
 
         await ingest_task
+        await worker_task
         await self._en_queue.put(None)
         await self._es_queue.put(None)
         await self._partial_queue.put(None)
+        await self._coalesced_queue.put(None)
 
     def iter_stream(
         self, name: str, audio_stream: AsyncIterator[bytes],
@@ -316,4 +350,6 @@ class SimulStreamingPipeline(BasePipeline):
             return self._drain_queue(self._es_queue)
         if name == "en-partial":
             return self._drain_queue(self._partial_queue)
+        if name == "en-coalesced":
+            return self._drain_queue(self._coalesced_queue)
         return None

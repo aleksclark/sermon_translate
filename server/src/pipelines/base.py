@@ -76,6 +76,20 @@ class BasePipeline(abc.ABC):
             if self._ref_count <= 0:
                 self._ref_count = 0
                 await self._do_stop()
+                self._release_gpu()
+
+    @staticmethod
+    def _release_gpu() -> None:
+        try:
+            import gc
+
+            import torch
+
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
     def iter_stream(
         self, name: str, audio_stream: AsyncIterator[bytes]
@@ -87,6 +101,13 @@ class BasePipeline(abc.ABC):
         Return ``None`` if the stream has no data.
         """
         return None
+
+    def get_buffer_stats(self) -> tuple[int, float]:
+        """Return (pending_sentences, queued_audio_seconds).
+
+        Pipelines that track internal buffers should override this.
+        """
+        return 0, 0.0
 
     @staticmethod
     async def _drain_queue(q: asyncio.Queue[str | None]) -> AsyncIterator[str]:
