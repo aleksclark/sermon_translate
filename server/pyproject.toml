@@ -31,7 +31,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-seamless-communication = { path = "../../seamless_communication" }
+seamless-communication = { git = "https://github.com/aleksclark/seamless_communication.git", branch = "main" }
 
 [tool.uv]
 override-dependencies = ["numpy>=2"]
