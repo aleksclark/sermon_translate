@@ -7,7 +7,16 @@ import pytest
 
 from src.api.deps import init_deps
 from src.api.store import SessionStore
-from src.models import PipelineInfo, ServerStatsTracker, Session, SessionCreate, SessionStatus
+from src.models import (
+    MetadataEnvelope,
+    MetadataKind,
+    PipelineInfo,
+    ProsodyFrame,
+    ServerStatsTracker,
+    Session,
+    SessionCreate,
+    SessionStatus,
+)
 from src.pipelines import PipelineRegistry
 from src.pipelines.base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
 from src.transport.base import EventType, TransportConnection, TransportEvent
@@ -99,6 +108,51 @@ class SessionEchoPipeline(BasePipeline):
     ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
         if name == "transcript":
             return self._drain_text(name, session)
+        return None
+
+
+class SessionMetadataPipeline(BasePipeline):
+    @property
+    def info(self) -> PipelineInfo:
+        return PipelineInfo(id="meta", name="Meta", description="Metadata pipeline")
+
+    @property
+    def output_streams(self) -> list[OutputStreamDescriptor]:
+        return [
+            OutputStreamDescriptor(name="audio", kind=OutputStreamKind.AUDIO),
+            OutputStreamDescriptor(
+                name="prosody", kind=OutputStreamKind.METADATA, consumes_audio=False
+            ),
+        ]
+
+    async def process(
+        self, audio_stream: AsyncIterator[bytes], session: Session | None = None
+    ) -> AsyncIterator[bytes]:
+        sequence = 0
+        async for chunk in audio_stream:
+            await self._publish_metadata(
+                "prosody",
+                MetadataEnvelope(
+                    stream="prosody",
+                    kind=MetadataKind.PROSODY,
+                    sequence=sequence,
+                    prosody=ProsodyFrame(energy=float(len(chunk)), confidence=1.0),
+                    payload={"session": session.id if session is not None else None},
+                ),
+                session,
+            )
+            sequence += 1
+            yield chunk
+        await self._finish_metadata("prosody", session)
+
+    def iter_metadata_stream(
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
+    ) -> AsyncIterator[MetadataEnvelope] | None:
+        if name == "prosody":
+            return self._drain_metadata(name, session)
         return None
 
 
@@ -282,3 +336,75 @@ async def test_concurrent_sessions_keep_outputs_isolated(
     assert second_text == [f"{second.id}:second"]
     assert pipeline._session_text_queues == {}
     assert pipeline._ref_count == 0
+
+
+def _metadata_setup() -> tuple[SessionStore, PipelineRegistry, SessionMetadataPipeline]:
+    store = SessionStore()
+    registry = PipelineRegistry()
+    pipeline = SessionMetadataPipeline()
+    registry.register(pipeline)
+    init_deps(store, registry, ServerStatsTracker())
+    return store, registry, pipeline
+
+
+async def test_metadata_stream_forwarded_as_pipeline_events() -> None:
+    store, _, pipeline = _metadata_setup()
+    session = store.create(SessionCreate(pipeline_id="meta"))
+    transport = BlockingTransport(
+        audio=[b"ab", b"cde"],
+        events=[TransportEvent(type=EventType.AUDIO_END, session_id=session.id)],
+    )
+
+    await asyncio.wait_for(run_session(transport, session.id), timeout=1)
+
+    metadata_events = [
+        event.payload
+        for event in transport.sent_events
+        if event.type == EventType.PIPELINE_EVENT and event.payload.get("kind") == "metadata"
+    ]
+    assert [p["metadata"]["sequence"] for p in metadata_events] == [0, 1]
+    assert [p["stream"] for p in metadata_events] == ["prosody", "prosody"]
+    assert [p["metadata"]["prosody"]["energy"] for p in metadata_events] == [2.0, 3.0]
+    assert transport.sent_audio == [b"ab", b"cde"]
+    assert pipeline._session_metadata_queues == {}
+    assert pipeline._ref_count == 0
+
+
+async def test_metadata_streams_are_session_isolated_and_ordered() -> None:
+    store, _, pipeline = _metadata_setup()
+    first = store.create(SessionCreate(pipeline_id="meta"))
+    second = store.create(SessionCreate(pipeline_id="meta"))
+    first_transport = BlockingTransport(
+        audio=[b"a", b"bb"],
+        events=[TransportEvent(type=EventType.AUDIO_END, session_id=first.id)],
+    )
+    second_transport = BlockingTransport(
+        audio=[b"ccc"],
+        events=[TransportEvent(type=EventType.AUDIO_END, session_id=second.id)],
+    )
+
+    await asyncio.wait_for(
+        asyncio.gather(
+            run_session(first_transport, first.id),
+            run_session(second_transport, second.id),
+        ),
+        timeout=1,
+    )
+
+    def metadata(transport: BlockingTransport) -> list[dict[str, object]]:
+        return [
+            event.payload
+            for event in transport.sent_events
+            if event.type == EventType.PIPELINE_EVENT
+            and event.payload.get("kind") == "metadata"
+        ]
+
+    first_meta = metadata(first_transport)
+    second_meta = metadata(second_transport)
+    assert [p["metadata"]["sequence"] for p in first_meta] == [0, 1]
+    assert [p["metadata"]["payload"]["session"] for p in first_meta] == [first.id, first.id]
+    assert [p["metadata"]["sequence"] for p in second_meta] == [0]
+    assert [p["metadata"]["payload"]["session"] for p in second_meta] == [second.id]
+    assert pipeline._session_metadata_queues == {}
+    assert pipeline._ref_count == 0
+

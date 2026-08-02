@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SessionStats } from "../api/index.ts";
+import type { MetadataEnvelope, SessionStats } from "../api/index.ts";
 import type { AudioSource } from "../components/NewSessionModal.tsx";
 import type { TransportEvent } from "../transport/index.ts";
 import { WebRTCTransport } from "../transport/index.ts";
@@ -17,6 +17,20 @@ export interface TranscriptLine {
   stream: string;
   text: string;
   timestamp: number;
+}
+
+export interface MetadataUpdate {
+  stream: string;
+  envelope: MetadataEnvelope;
+  timestamp: number;
+}
+
+export function parseMetadataEvent(evt: TransportEvent): MetadataUpdate | null {
+  if (evt.type !== "pipeline.event" || evt.payload.kind !== "metadata") return null;
+  const stream = (evt.payload.stream as string) || "metadata";
+  const envelope = evt.payload.metadata as unknown as MetadataEnvelope;
+  if (!envelope) return null;
+  return { stream, envelope, timestamp: Date.now() };
 }
 
 interface FileMediaStreamResult {
@@ -48,6 +62,7 @@ export function useAudioStream(options: AudioStreamOptions | null) {
   const [muted, setMuted] = useState(false);
   const [liveStats, setLiveStats] = useState<SessionStats | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, TranscriptLine[]>>({});
+  const [metadata, setMetadata] = useState<Record<string, MetadataUpdate[]>>({});
   const transportRef = useRef<WebRTCTransport | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cancelledRef = useRef(false);
@@ -67,6 +82,7 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     setMuted(false);
     setLiveStats(null);
     setTranscripts({});
+    setMetadata({});
   }, []);
 
   const toggleMute = useCallback(() => {
@@ -157,6 +173,14 @@ export function useAudioStream(options: AudioStreamOptions | null) {
             ...prev,
             [streamName]: [...(prev[streamName] || []), line],
           }));
+        } else {
+          const update = parseMetadataEvent(evt);
+          if (update) {
+            setMetadata((prev) => ({
+              ...prev,
+              [update.stream]: [...(prev[update.stream] || []), update],
+            }));
+          }
         }
       });
 
@@ -172,5 +196,5 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     };
   }, [options?.sessionId]);
 
-  return { connected, muted, liveStats, transcripts, stop, toggleMute };
+  return { connected, muted, liveStats, transcripts, metadata, stop, toggleMute };
 }

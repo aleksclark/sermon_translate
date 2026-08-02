@@ -1,3 +1,10 @@
+from .metadata import (
+    METADATA_SCHEMA_VERSION,
+    MetadataEnvelope,
+    MetadataKind,
+    ProsodyFrame,
+    SynthesisInstructions,
+)
 from .session import (
     AudioSource,
     CrosstalkChannelInfo,
@@ -14,11 +21,15 @@ from .session import (
 from .stats import ServerStats, ServerStatsTracker
 
 __all__ = [
+    "METADATA_SCHEMA_VERSION",
     "AudioSource",
     "CrosstalkChannelInfo",
     "CrosstalkSessionInfo",
+    "MetadataEnvelope",
+    "MetadataKind",
     "OutputStreamInfo",
     "PipelineInfo",
+    "ProsodyFrame",
     "RTCOffer",
     "ServerStats",
     "ServerStatsTracker",
@@ -27,4 +38,5 @@ __all__ = [
     "SessionStats",
     "SessionStatus",
     "SessionUpdate",
+    "SynthesisInstructions",
 ]

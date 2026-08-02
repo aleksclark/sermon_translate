@@ -111,6 +111,23 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
                     )
                 )
 
+        async def forward_metadata(name: str, stream: AsyncIterator[bytes]) -> None:
+            iterator = pipeline.iter_metadata_stream(name, stream, session=session)
+            if iterator is None:
+                return
+            async for envelope in iterator:
+                await transport.send_event(
+                    TransportEvent(
+                        type=EventType.PIPELINE_EVENT,
+                        session_id=session_id,
+                        payload={
+                            "kind": "metadata",
+                            "stream": name,
+                            "metadata": envelope.model_dump(),
+                        },
+                    )
+                )
+
         async def stats_loop() -> None:
             while not stop_event.is_set():
                 session.stats.duration_seconds = round(time.monotonic() - start_time, 1)
@@ -150,6 +167,18 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
                     stream = empty_stream()
                 processor_tasks.append(
                     asyncio.create_task(forward_text(descriptor.name, stream))
+                )
+            elif descriptor.kind == OutputStreamKind.METADATA:
+                if descriptor.consumes_audio:
+                    meta_queue: asyncio.Queue[bytes | None] = asyncio.Queue(
+                        maxsize=BOUNDED_BACKPRESSURE_FANOUT_QUEUE_CAPACITY
+                    )
+                    audio_fanout_queues.append(meta_queue)
+                    meta_stream = queue_iter(meta_queue)
+                else:
+                    meta_stream = empty_stream()
+                processor_tasks.append(
+                    asyncio.create_task(forward_metadata(descriptor.name, meta_stream))
                 )
 
         if has_audio:

@@ -76,3 +76,36 @@ export interface CrosstalkChannelInfo {
   type: string;
   session_id: string;
 }
+
+export type MetadataKind = "prosody" | "instructions";
+
+export interface ProsodyFrame {
+  f0_hz: number | null;
+  pitch_confidence: number | null;
+  energy: number | null;
+  speaking_rate: number | null;
+  is_pause: boolean | null;
+  boundary: string | null;
+  emphasis: number | null;
+  confidence: number | null;
+  features: Record<string, number>;
+}
+
+export interface SynthesisInstructions {
+  hints: Record<string, unknown>;
+  markers: Record<string, unknown>[];
+}
+
+export interface MetadataEnvelope {
+  schema_version: number;
+  stream: string;
+  kind: MetadataKind;
+  sequence: number;
+  source_utterance_id: string | null;
+  target_utterance_id: string | null;
+  start_ms: number | null;
+  end_ms: number | null;
+  prosody: ProsodyFrame | null;
+  instructions: SynthesisInstructions | null;
+  payload: Record<string, unknown>;
+}

@@ -6,12 +6,13 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
 
-from src.models import OutputStreamInfo, PipelineInfo, Session
+from src.models import MetadataEnvelope, OutputStreamInfo, PipelineInfo, Session
 
 
 class OutputStreamKind(StrEnum):
     AUDIO = "audio"
     TEXT = "text"
+    METADATA = "metadata"
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,9 @@ class BasePipeline(abc.ABC):
         self._ref_lock = asyncio.Lock()
         self._session_text_queues: dict[
             tuple[str | None, str], asyncio.Queue[str | None]
+        ] = {}
+        self._session_metadata_queues: dict[
+            tuple[str | None, str], asyncio.Queue[MetadataEnvelope | None]
         ] = {}
 
     @property
@@ -128,3 +132,56 @@ class BasePipeline(abc.ABC):
         keys = [key for key in self._session_text_queues if key[0] == session.id]
         for key in keys:
             del self._session_text_queues[key]
+        metadata_keys = [
+            key for key in self._session_metadata_queues if key[0] == session.id
+        ]
+        for key in metadata_keys:
+            del self._session_metadata_queues[key]
+
+    def iter_metadata_stream(
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
+    ) -> AsyncIterator[MetadataEnvelope] | None:
+        """Return an async iterator for the named metadata output stream.
+
+        The handler calls this for every stream declared with
+        ``OutputStreamKind.METADATA``. Return ``None`` if the stream has no data.
+        Subclasses typically drive it from :meth:`_publish_metadata` /
+        :meth:`_finish_metadata` and return :meth:`_drain_metadata`.
+        """
+        return None
+
+    def _metadata_queue(
+        self, name: str, session: Session | None
+    ) -> asyncio.Queue[MetadataEnvelope | None]:
+        key = (session.id if session is not None else None, name)
+        queue = self._session_metadata_queues.get(key)
+        if queue is None:
+            queue = asyncio.Queue(maxsize=8)
+            self._session_metadata_queues[key] = queue
+        return queue
+
+    async def _publish_metadata(
+        self, name: str, envelope: MetadataEnvelope, session: Session | None
+    ) -> None:
+        await self._metadata_queue(name, session).put(envelope)
+
+    async def _finish_metadata(self, name: str, session: Session | None) -> None:
+        await self._metadata_queue(name, session).put(None)
+
+    async def _drain_metadata(
+        self, name: str, session: Session | None
+    ) -> AsyncIterator[MetadataEnvelope]:
+        key = (session.id if session is not None else None, name)
+        queue = self._metadata_queue(name, session)
+        try:
+            while True:
+                envelope = await queue.get()
+                if envelope is None:
+                    return
+                yield envelope
+        finally:
+            if self._session_metadata_queues.get(key) is queue:
+                del self._session_metadata_queues[key]
