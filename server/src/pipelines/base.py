@@ -19,6 +19,7 @@ class OutputStreamDescriptor:
     name: str
     kind: OutputStreamKind
     label: str = ""
+    consumes_audio: bool = True
 
 
 class BasePipeline(abc.ABC):
@@ -27,6 +28,9 @@ class BasePipeline(abc.ABC):
     def __init__(self) -> None:
         self._ref_count = 0
         self._ref_lock = asyncio.Lock()
+        self._session_text_queues: dict[
+            tuple[str | None, str], asyncio.Queue[str | None]
+        ] = {}
 
     @property
     @abc.abstractmethod
@@ -78,7 +82,10 @@ class BasePipeline(abc.ABC):
                 await self._do_stop()
 
     def iter_stream(
-        self, name: str, audio_stream: AsyncIterator[bytes]
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
     ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
         """Return an async iterator for the named output stream.
 
@@ -88,10 +95,36 @@ class BasePipeline(abc.ABC):
         """
         return None
 
-    @staticmethod
-    async def _drain_queue(q: asyncio.Queue[str | None]) -> AsyncIterator[str]:
-        while True:
-            text = await q.get()
-            if text is None:
-                return
-            yield text
+    def _text_queue(
+        self, name: str, session: Session | None
+    ) -> asyncio.Queue[str | None]:
+        key = (session.id if session is not None else None, name)
+        queue = self._session_text_queues.get(key)
+        if queue is None:
+            queue = asyncio.Queue(maxsize=8)
+            self._session_text_queues[key] = queue
+        return queue
+
+    async def _publish_text(self, name: str, text: str, session: Session | None) -> None:
+        await self._text_queue(name, session).put(text)
+
+    async def _finish_text(self, name: str, session: Session | None) -> None:
+        await self._text_queue(name, session).put(None)
+
+    async def _drain_text(self, name: str, session: Session | None) -> AsyncIterator[str]:
+        key = (session.id if session is not None else None, name)
+        queue = self._text_queue(name, session)
+        try:
+            while True:
+                text = await queue.get()
+                if text is None:
+                    return
+                yield text
+        finally:
+            if self._session_text_queues.get(key) is queue:
+                del self._session_text_queues[key]
+
+    def discard_session_outputs(self, session: Session) -> None:
+        keys = [key for key in self._session_text_queues if key[0] == session.id]
+        for key in keys:
+            del self._session_text_queues[key]

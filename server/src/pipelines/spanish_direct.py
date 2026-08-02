@@ -82,7 +82,6 @@ class SpanishDirectPipeline(BasePipeline):
         self._sample_rate = sample_rate
         self._processor: Any = None
         self._model: Any = None
-        self._es_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     @property
     def info(self) -> PipelineInfo:
@@ -108,6 +107,7 @@ class SpanishDirectPipeline(BasePipeline):
                 name="es-transcript",
                 kind=OutputStreamKind.TEXT,
                 label="Spanish",
+                consumes_audio=False,
             ),
         ]
 
@@ -182,7 +182,6 @@ class SpanishDirectPipeline(BasePipeline):
     async def _do_stop(self) -> None:
         self._processor = None
         self._model = None
-        await self._es_queue.put(None)
 
     async def process(
         self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
@@ -224,7 +223,7 @@ class SpanishDirectPipeline(BasePipeline):
                 segment = buffer.copy()
                 buffer = np.array([], dtype=np.float32)
                 async for out in self._process_segment(
-                    segment, context, context_samples, loop
+                    segment, context, context_samples, loop, session
                 ):
                     yield out
                 context = self._update_context(
@@ -237,11 +236,11 @@ class SpanishDirectPipeline(BasePipeline):
         )
         if len(buffer) >= min_samples:
             async for out in self._process_segment(
-                buffer, context, context_samples, loop
+                buffer, context, context_samples, loop, session
             ):
                 yield out
 
-        await self._es_queue.put(None)
+        await self._finish_text("es-transcript", session)
 
     async def _process_segment(
         self,
@@ -249,6 +248,7 @@ class SpanishDirectPipeline(BasePipeline):
         context: np.ndarray,
         context_samples: int,
         loop: asyncio.AbstractEventLoop,
+        session: Session | None,
     ) -> AsyncIterator[bytes]:
         use_context = context_samples > 0 and len(context) > 0
         full_audio = np.concatenate([context, segment]) if use_context else segment
@@ -265,7 +265,7 @@ class SpanishDirectPipeline(BasePipeline):
         if not es_text:
             return
 
-        await self._es_queue.put(es_text)
+        await self._publish_text("es-transcript", es_text, session)
         pcm_bytes = await synthesize_spanish(es_text, self._sample_rate)
         logger.info("TTS produced %d bytes", len(pcm_bytes))
         if pcm_bytes:
@@ -285,8 +285,11 @@ class SpanishDirectPipeline(BasePipeline):
         return combined
 
     def iter_stream(
-        self, name: str, audio_stream: AsyncIterator[bytes]
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
     ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
         if name == "es-transcript":
-            return self._drain_queue(self._es_queue)
+            return self._drain_text(name, session)
         return None

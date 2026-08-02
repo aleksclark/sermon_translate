@@ -50,7 +50,10 @@ class WhisperTTSPipeline(BasePipeline):
     def output_streams(self) -> list[OutputStreamDescriptor]:
         return [
             OutputStreamDescriptor(
-                name="transcript", kind=OutputStreamKind.TEXT, label="Transcript",
+                name="transcript",
+                kind=OutputStreamKind.TEXT,
+                label="Transcript",
+                consumes_audio=True,
             ),
         ]
 
@@ -76,7 +79,10 @@ class WhisperTTSPipeline(BasePipeline):
         yield  # noqa: F841
 
     def iter_stream(
-        self, name: str, audio_stream: AsyncIterator[bytes]
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
     ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
         if name == "transcript":
             return self._process_text(audio_stream)

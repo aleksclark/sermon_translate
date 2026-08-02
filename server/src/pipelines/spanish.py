@@ -44,8 +44,6 @@ class SpanishTranslationPipeline(BasePipeline):
         self._translator: Any = None
         self._sp_source: Any = None
         self._sp_target: Any = None
-        self._en_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        self._es_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     @property
     def info(self) -> PipelineInfo:
@@ -63,10 +61,16 @@ class SpanishTranslationPipeline(BasePipeline):
                 name="audio", kind=OutputStreamKind.AUDIO, label="Spanish Audio",
             ),
             OutputStreamDescriptor(
-                name="en-transcript", kind=OutputStreamKind.TEXT, label="English",
+                name="en-transcript",
+                kind=OutputStreamKind.TEXT,
+                label="English",
+                consumes_audio=False,
             ),
             OutputStreamDescriptor(
-                name="es-transcript", kind=OutputStreamKind.TEXT, label="Spanish",
+                name="es-transcript",
+                kind=OutputStreamKind.TEXT,
+                label="Spanish",
+                consumes_audio=False,
             ),
         ]
 
@@ -137,8 +141,6 @@ class SpanishTranslationPipeline(BasePipeline):
         self._translator = None
         self._sp_source = None
         self._sp_target = None
-        await self._en_queue.put(None)
-        await self._es_queue.put(None)
 
     async def process(
         self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
@@ -160,18 +162,21 @@ class SpanishTranslationPipeline(BasePipeline):
             if len(buffer) >= samples_needed:
                 segment = buffer.copy()
                 buffer = np.array([], dtype=np.float32)
-                async for out in self._process_segment(segment, loop):
+                async for out in self._process_segment(segment, loop, session):
                     yield out
 
         if len(buffer) >= min_samples:
-            async for out in self._process_segment(buffer, loop):
+            async for out in self._process_segment(buffer, loop, session):
                 yield out
 
-        await self._en_queue.put(None)
-        await self._es_queue.put(None)
+        await self._finish_text("en-transcript", session)
+        await self._finish_text("es-transcript", session)
 
     async def _process_segment(
-        self, audio: np.ndarray, loop: asyncio.AbstractEventLoop
+        self,
+        audio: np.ndarray,
+        loop: asyncio.AbstractEventLoop,
+        session: Session | None,
     ) -> AsyncIterator[bytes]:
         texts = await loop.run_in_executor(
             None, partial(_transcribe_sync, self._whisper_model, audio)
@@ -183,18 +188,21 @@ class SpanishTranslationPipeline(BasePipeline):
             )
             es_text = await loop.run_in_executor(None, translate_fn)
 
-            await self._en_queue.put(en_text)
-            await self._es_queue.put(es_text)
+            await self._publish_text("en-transcript", en_text, session)
+            await self._publish_text("es-transcript", es_text, session)
 
             pcm_bytes = await synthesize_spanish(es_text, self._sample_rate)
             if pcm_bytes:
                 yield pcm_bytes
 
     def iter_stream(
-        self, name: str, audio_stream: AsyncIterator[bytes]
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
     ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
         if name == "en-transcript":
-            return self._drain_queue(self._en_queue)
+            return self._drain_text(name, session)
         if name == "es-transcript":
-            return self._drain_queue(self._es_queue)
+            return self._drain_text(name, session)
         return None

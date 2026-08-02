@@ -268,7 +268,6 @@ class SeamlessStreamingPipeline(BasePipeline):
         self._agent: Any = None
         self._tgt_lang = "spa"
         self._device = "cuda" if _has_cuda() else "cpu"
-        self._es_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     @property
     def info(self) -> PipelineInfo:
@@ -290,7 +289,10 @@ class SeamlessStreamingPipeline(BasePipeline):
                 name="audio", kind=OutputStreamKind.AUDIO, label="Spanish Audio",
             ),
             OutputStreamDescriptor(
-                name="es-transcript", kind=OutputStreamKind.TEXT, label="Spanish",
+                name="es-transcript",
+                kind=OutputStreamKind.TEXT,
+                label="Spanish",
+                consumes_audio=False,
             ),
         ]
 
@@ -305,7 +307,6 @@ class SeamlessStreamingPipeline(BasePipeline):
 
     async def _do_stop(self) -> None:
         self._agent = None
-        await self._es_queue.put(None)
 
     async def process(
         self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
@@ -356,7 +357,7 @@ class SeamlessStreamingPipeline(BasePipeline):
                 if text is None:
                     break
                 logger.info("segment translated: %r", text[:120])
-                await self._es_queue.put(text)
+                await self._publish_text("es-transcript", text, session)
                 seq = next_seq
                 next_seq += 1
                 tasks.append(asyncio.create_task(_tts_one(seq, text)))
@@ -392,11 +393,14 @@ class SeamlessStreamingPipeline(BasePipeline):
 
         await feed
         await tts
-        await self._es_queue.put(None)
+        await self._finish_text("es-transcript", session)
 
     def iter_stream(
-        self, name: str, audio_stream: AsyncIterator[bytes]
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
     ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
         if name == "es-transcript":
-            return self._drain_queue(self._es_queue)
+            return self._drain_text(name, session)
         return None
