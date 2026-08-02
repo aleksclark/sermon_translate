@@ -15,6 +15,9 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from src.models import (
+    AudioSource,
+    CrosstalkChannelInfo,
+    CrosstalkSessionInfo,
     OutputStreamInfo,
     PipelineInfo,
     ServerStats,
@@ -27,6 +30,7 @@ from src.models import (
 
 SHARED_MODELS: list[type] = [
     SessionStatus,
+    AudioSource,
     OutputStreamInfo,
     PipelineInfo,
     SessionCreate,
@@ -34,6 +38,8 @@ SHARED_MODELS: list[type] = [
     SessionStats,
     Session,
     ServerStats,
+    CrosstalkSessionInfo,
+    CrosstalkChannelInfo,
 ]
 
 REQUEST_MODELS: set[str] = {"SessionCreate", "SessionUpdate"}

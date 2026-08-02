@@ -6,10 +6,11 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.api import SessionStore, init_deps
+from src.api import SessionStore, crosstalk_router, init_deps
 from src.api import router as api_router
 from src.models import ServerStatsTracker
 from src.pipelines import create_default_registry
+from src.transport.crosstalk_service import CrosstalkService
 
 LOG_FILE = Path(__file__).resolve().parent.parent.parent / "server.log"
 
@@ -49,9 +50,11 @@ def create_app() -> FastAPI:
     store = SessionStore()
     registry = create_default_registry()
     stats = ServerStatsTracker()
-    init_deps(store, registry, stats)
+    crosstalk_service = CrosstalkService()
+    init_deps(store, registry, stats, crosstalk_service)
 
     app.include_router(api_router)
+    app.include_router(crosstalk_router)
 
     return app
 

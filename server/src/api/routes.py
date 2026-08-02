@@ -76,9 +76,10 @@ async def delete_session(session_id: str) -> None:
 @router.post("/sessions/{session_id}/offer")
 async def webrtc_offer(session_id: str, offer: RTCOffer) -> dict:
     """Exchange SDP offer/answer to establish a WebRTC connection."""
-    from aiortc import RTCConfiguration, RTCPeerConnection, RTCSessionDescription  # noqa: F811
+    from aiortc import RTCPeerConnection, RTCSessionDescription  # noqa: F811
 
     from src.transport.handler import run_session
+    from src.transport.ice import build_rtc_configuration
     from src.transport.rtc import WebRTCTransport
 
     store = get_session_store()
@@ -90,7 +91,7 @@ async def webrtc_offer(session_id: str, offer: RTCOffer) -> dict:
     if registry.get(session.pipeline_id) is None:
         raise HTTPException(status_code=400, detail="Pipeline not found")
 
-    pc = RTCPeerConnection(configuration=RTCConfiguration(iceServers=[]))
+    pc = RTCPeerConnection(configuration=build_rtc_configuration())
     transport = WebRTCTransport(pc, sample_rate=session.sample_rate)
 
     pc.addTrack(transport.output_track)

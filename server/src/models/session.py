@@ -14,6 +14,11 @@ class SessionStatus(StrEnum):
     CLOSED = "closed"
 
 
+class AudioSource(StrEnum):
+    WEBRTC = "webrtc"
+    CROSSTALK = "crosstalk"
+
+
 class OutputStreamInfo(BaseModel):
     name: str
     kind: str
@@ -33,6 +38,8 @@ class SessionCreate(BaseModel):
     channels: int = 1
     label: str = ""
     audio_context_seconds: float = 0.0
+    audio_source: AudioSource = AudioSource.WEBRTC
+    crosstalk_session_id: str | None = None
 
 
 class SessionUpdate(BaseModel):
@@ -63,5 +70,20 @@ class Session(BaseModel):
     sample_rate: int = 48000
     channels: int = 1
     audio_context_seconds: float = 0.0
+    audio_source: AudioSource = AudioSource.WEBRTC
+    crosstalk_session_id: str | None = None
     created_at: float = Field(default_factory=time.time)
     stats: SessionStats = Field(default_factory=SessionStats)
+
+
+class CrosstalkSessionInfo(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+
+
+class CrosstalkChannelInfo(BaseModel):
+    id: str
+    name: str
+    type: str
+    session_id: str

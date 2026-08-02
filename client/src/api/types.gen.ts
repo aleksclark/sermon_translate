@@ -2,6 +2,8 @@
 
 export type SessionStatus = "created" | "active" | "paused" | "closed";
 
+export type AudioSource = "webrtc" | "crosstalk";
+
 export interface OutputStreamInfo {
   name: string;
   kind: string;
@@ -21,6 +23,8 @@ export interface SessionCreate {
   channels?: number;
   label?: string;
   audio_context_seconds?: number;
+  audio_source?: AudioSource;
+  crosstalk_session_id?: string | null;
 }
 
 export interface SessionUpdate {
@@ -46,6 +50,8 @@ export interface Session {
   sample_rate: number;
   channels: number;
   audio_context_seconds: number;
+  audio_source: AudioSource;
+  crosstalk_session_id: string | null;
   created_at: number;
   stats: SessionStats;
 }
@@ -56,4 +62,17 @@ export interface ServerStats {
   total_sessions: number;
   total_bytes_processed: number;
   available_pipelines: number;
+}
+
+export interface CrosstalkSessionInfo {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface CrosstalkChannelInfo {
+  id: string;
+  name: string;
+  type: string;
+  session_id: string;
 }

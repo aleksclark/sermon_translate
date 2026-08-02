@@ -16,6 +16,8 @@ class SessionStore:
             sample_rate=req.sample_rate,
             channels=req.channels,
             audio_context_seconds=req.audio_context_seconds,
+            audio_source=req.audio_source,
+            crosstalk_session_id=req.crosstalk_session_id,
         )
         self._sessions[session.id] = session
         return session

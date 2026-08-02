@@ -19,6 +19,8 @@ describe("generated types", () => {
       sample_rate: 48000,
       channels: 1,
       audio_context_seconds: 0,
+      audio_source: "webrtc",
+      crosstalk_session_id: null,
       created_at: Date.now(),
       stats: {
         bytes_received: 0,

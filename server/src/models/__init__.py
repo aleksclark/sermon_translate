@@ -1,4 +1,7 @@
 from .session import (
+    AudioSource,
+    CrosstalkChannelInfo,
+    CrosstalkSessionInfo,
     OutputStreamInfo,
     PipelineInfo,
     RTCOffer,
@@ -11,6 +14,9 @@ from .session import (
 from .stats import ServerStats, ServerStatsTracker
 
 __all__ = [
+    "AudioSource",
+    "CrosstalkChannelInfo",
+    "CrosstalkSessionInfo",
     "OutputStreamInfo",
     "PipelineInfo",
     "RTCOffer",
