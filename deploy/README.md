@@ -16,8 +16,8 @@ V100 GPUs.
 | Nomad        | 2.0.x, region `home`, datacenter `home`               |
 | CPU          | 8-core Xeon E5-1620 v4                                  |
 | RAM          | ~32 GB                                                  |
-| GPUs         | **2 × Tesla V100-SXM2-16GB** (Volta, sm_70)            |
-| **VRAM**     | **2 × 16 GB = 32 GB total**                            |
+| GPUs         | **2 × Tesla V100-SXM2-16GB** (Volta, sm_70) **plus a 4 GB M2000 display card** |
+| **VRAM**     | **2 × 16 GB = 32 GB compute**; M2000 is excluded by the job specs |
 | Docker       | driver runtimes `io.containerd.runc.v2, runc` — **no `nvidia` runtime** |
 | Nomad devices| **none advertised** — the `nvidia/gpu` device plugin is not running |
 | Node meta    | `gpu=true`, `gpu_count=2`, `gpu_type=v100-sxm2-16gb`, `ram_gb=32`, `compute=true` |
@@ -204,13 +204,20 @@ resources {
 
   # Emitted only when gpu_mode = "device"; omitted entirely in "runtime" mode
   # so an unsatisfiable device request cannot block placement.
-  device "nvidia/gpu" {
+  # Label pins the model (nvidia/gpu/Tesla V100-SXM2-16GB) so the 4 GB M2000
+  # display card that also lives on node-6 can never be assigned.
+  device "nvidia/gpu/${var.gpu_model}" {
     count = var.gpu_count        # 1 = single V100 (16 GB); 2 = both (32 GB)
+
+    constraint {
+      attribute = "${device.model}"
+      value     = var.gpu_model  # default: Tesla V100-SXM2-16GB
+    }
 
     constraint {
       attribute = "${device.attr.memory}"
       operator  = ">="
-      value     = "16000 MiB"
+      value     = "16000 MiB"    # belt-and-suspenders against the M2000
     }
   }
 }
@@ -223,6 +230,9 @@ exactly those (re-indexed from 0); the app selects the compute device via
 the literal `all` and would mask every GPU. Leave `CUDA_VISIBLE_DEVICES` unset
 so CUDA sees all injected devices, or pin an ordinal
 (`CUDA_VISIBLE_DEVICES=0`) only if you deliberately want one GPU out of the set.
+
+In `runtime` mode there is no device stanza, so the M2000 exclusion is your
+job: set `visible_devices` to explicit V100 UUIDs/ordinals (never `all`).
 
 ### Two-GPU variant
 

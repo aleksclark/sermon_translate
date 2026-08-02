@@ -56,6 +56,16 @@ variable "gpu_count" {
   default     = 1
 }
 
+variable "gpu_model" {
+  type        = string
+  description = <<-EOT
+    Exact GPU model the device plugin must assign. node-6 also advertises a
+    4 GB M2000 display card; pinning the model (and VRAM floor below) keeps
+    the scheduler from handing that card to inference or training.
+  EOT
+  default     = "Tesla V100-SXM2-16GB"
+}
+
 variable "gpu_mode" {
   type        = string
   description = <<-EOT
@@ -67,7 +77,9 @@ variable "gpu_mode" {
     "runtime" - no device stanza; rely on the docker `nvidia` runtime and
                 NVIDIA_VISIBLE_DEVICES. Use only when the device plugin is
                 unavailable. Nomad does not track GPU usage in this mode, so
-                two such jobs can silently contend for the same GPU.
+                two such jobs can silently contend for the same GPU. Pin
+                visible_devices to V100 ordinals — never leave it as "all"
+                while the M2000 is present.
   EOT
   default     = "device"
 
@@ -79,8 +91,12 @@ variable "gpu_mode" {
 
 variable "visible_devices" {
   type        = string
-  description = "NVIDIA_VISIBLE_DEVICES when gpu_mode is \"runtime\" (e.g. \"0\" or \"0,1\")."
-  default     = "all"
+  description = <<-EOT
+    NVIDIA_VISIBLE_DEVICES when gpu_mode is "runtime". Prefer explicit V100
+    UUIDs or ordinals (e.g. "GPU-..." or "1,2"), never "all", so the 4 GB
+    M2000 display card is never injected into the container.
+  EOT
+  default     = "0"
 }
 
 job "sermon-translate-gpu" {
@@ -145,12 +161,17 @@ job "sermon-translate-gpu" {
         memory = 12288
 
         dynamic "device" {
-          for_each = var.gpu_mode == "device" ? ["nvidia/gpu"] : []
+          for_each = var.gpu_mode == "device" ? [var.gpu_model] : []
           iterator = gpu
-          labels   = [gpu.value]
+          labels   = ["nvidia/gpu/${gpu.value}"]
 
           content {
             count = var.gpu_count
+
+            constraint {
+              attribute = "${device.model}"
+              value     = var.gpu_model
+            }
 
             constraint {
               attribute = "${device.attr.memory}"

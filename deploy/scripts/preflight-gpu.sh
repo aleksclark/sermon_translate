@@ -13,6 +13,7 @@
 #   NOMAD_ADDR    Nomad API address (default http://127.0.0.1:4646)
 #   NOMAD_TOKEN   Optional ACL token
 #   GPU_COUNT     GPUs the job requests (default 1)
+#   GPU_MODEL     Exact GPU model the job pins (default Tesla V100-SXM2-16GB)
 #   TASK_CPU      CPU MHz the job reserves (default 4000)
 #   TASK_MEMORY   Memory MB the job reserves (default 12288)
 #   MIN_VRAM_MIB  Per-GPU VRAM the job constraint demands (default 16000)
@@ -22,6 +23,7 @@ set -euo pipefail
 NODE_NAME="${1:-${NODE_NAME:-node-6}}"
 NOMAD_ADDR="${NOMAD_ADDR:-http://127.0.0.1:4646}"
 GPU_COUNT="${GPU_COUNT:-1}"
+GPU_MODEL="${GPU_MODEL:-Tesla V100-SXM2-16GB}"
 TASK_CPU="${TASK_CPU:-4000}"
 TASK_MEMORY="${TASK_MEMORY:-12288}"
 MIN_VRAM_MIB="${MIN_VRAM_MIB:-16000}"
@@ -105,27 +107,45 @@ if [ "${gpu_groups}" -eq 0 ]; then
   info "or submit the runtime-only variant (see deploy/README.md)"
 else
   pass "nvidia device plugin exposes ${gpu_total} GPU(s) in ${gpu_groups} device group(s)"
+  info "advertised models:"
+  printf '%s' "${gpu_devices}" | jq -r \
+    '.[] | "      \(.Name) x\(.Instances | length)  memory=\(.Attributes.memory)"'
 
-  if [ "${gpu_total}" -lt "${GPU_COUNT}" ]; then
-    fail "job requests ${GPU_COUNT} GPU(s) but only ${gpu_total} are advertised"
+  model_match="$(printf '%s' "${gpu_devices}" | jq --arg model "${GPU_MODEL}" '
+    [ .[]
+      | select(.Name == $model)
+      | .Instances | length
+    ] | add // 0')"
+
+  if [ "${model_match}" -ge "${GPU_COUNT}" ]; then
+    pass "${model_match} x ${GPU_MODEL} satisfy the model pin (need ${GPU_COUNT})"
+  elif [ "${model_match}" -eq 0 ]; then
+    fail "no GPU named \"${GPU_MODEL}\" is advertised"
+    info "the job pins device.model so the M2000 (4 GB) is never assigned"
   else
-    pass "advertised GPU count (${gpu_total}) satisfies the request (${GPU_COUNT})"
+    fail "only ${model_match} x ${GPU_MODEL} advertised, job requests ${GPU_COUNT}"
   fi
 
-  eligible="$(printf '%s' "${gpu_devices}" | jq --argjson min "${MIN_VRAM_MIB}" '
+  eligible="$(printf '%s' "${gpu_devices}" | jq --argjson min "${MIN_VRAM_MIB}" --arg model "${GPU_MODEL}" '
     [ .[]
-      | (.Attributes.memory.IntNumeratorVal // .Attributes.memory // 0) as $m
+      | select(.Name == $model)
+      | (.Attributes.memory.IntNumeratorVal // .Attributes.memory.Int // .Attributes.memory // 0) as $m
       | ($m | tonumber? // 0) as $mib
       | select($mib >= $min)
       | .Instances | length
     ] | add // 0')"
 
   if [ "${eligible}" -ge "${GPU_COUNT}" ]; then
-    pass "${eligible} GPU(s) meet the >= ${MIN_VRAM_MIB} MiB VRAM constraint"
+    pass "${eligible} x ${GPU_MODEL} meet the >= ${MIN_VRAM_MIB} MiB VRAM floor"
   else
-    warn "only ${eligible} GPU(s) report >= ${MIN_VRAM_MIB} MiB VRAM"
-    info "device memory attributes as reported:"
-    printf '%s' "${gpu_devices}" | jq -r '.[] | "      \(.Name): \(.Attributes.memory)"'
+    fail "only ${eligible} x ${GPU_MODEL} report >= ${MIN_VRAM_MIB} MiB VRAM"
+  fi
+
+  other="$(printf '%s' "${gpu_devices}" | jq --arg model "${GPU_MODEL}" '
+    [ .[] | select(.Name != $model) | "\(.Name) x\(.Instances | length)" ] | join(", ")')"
+  if [ -n "${other}" ]; then
+    warn "other GPUs present (excluded by model pin): ${other}"
+    info "runtime mode must pin visible_devices to V100 ordinals/UUIDs, never \"all\""
   fi
 fi
 
