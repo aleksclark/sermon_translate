@@ -29,6 +29,14 @@ class Settings:
     crosstalk_allow_private_hosts: bool = False
     crosstalk_request_timeout: float = 10.0
 
+    compute_device: str = "cpu"
+    compute_type: str = ""
+
+    def resolved_compute_type(self) -> str:
+        if self.compute_type:
+            return self.compute_type
+        return "float16" if self.compute_device.startswith("cuda") else "int8"
+
     def ice_servers(self) -> list[IceServerConfig]:
         servers: list[IceServerConfig] = []
         if self.ice_stun_urls:
@@ -73,6 +81,8 @@ def load_settings() -> Settings:
         crosstalk_password=os.environ.get("CROSSTALK_PASSWORD", ""),
         crosstalk_allow_private_hosts=_bool_env("CROSSTALK_ALLOW_PRIVATE_HOSTS", False),
         crosstalk_request_timeout=_float_env("CROSSTALK_REQUEST_TIMEOUT", 10.0),
+        compute_device=os.environ.get("COMPUTE_DEVICE", "cpu").strip() or "cpu",
+        compute_type=os.environ.get("COMPUTE_TYPE", "").strip(),
     )
 
 

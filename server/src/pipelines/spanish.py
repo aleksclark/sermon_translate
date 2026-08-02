@@ -88,16 +88,30 @@ class SpanishTranslationPipeline(BasePipeline):
     def _load_whisper(self) -> Any:
         from faster_whisper import WhisperModel
 
-        return WhisperModel(self._whisper_model_size, device="cpu", compute_type="int8")
+        from src.config import get_settings
+
+        settings = get_settings()
+        return WhisperModel(
+            self._whisper_model_size,
+            device=settings.compute_device,
+            compute_type=settings.resolved_compute_type(),
+        )
 
     def _load_translation(self) -> tuple[Any, Any, Any]:
         import ctranslate2
         from huggingface_hub import snapshot_download
 
+        from src.config import get_settings
+
+        settings = get_settings()
         ct2_dir = self._get_ct2_model_dir()
         hf_dir = snapshot_download(TRANSLATION_MODEL_ID)
 
-        translator = ctranslate2.Translator(ct2_dir, device="cpu", compute_type="int8")
+        translator = ctranslate2.Translator(
+            ct2_dir,
+            device=settings.compute_device,
+            compute_type=settings.resolved_compute_type(),
+        )
         sp_src = spm.SentencePieceProcessor()
         sp_src.load(f"{hf_dir}/source.spm")  # type: ignore[attr-defined]
         sp_tgt = spm.SentencePieceProcessor()

@@ -33,6 +33,15 @@ def _has_cuda() -> bool:
     return torch.cuda.is_available()
 
 
+def _resolve_device() -> str:
+    import os
+
+    explicit = os.environ.get("COMPUTE_DEVICE", "").strip()
+    if explicit:
+        return explicit
+    return "cuda" if _has_cuda() else "cpu"
+
+
 def _build_agent_args(tgt_lang: str = "spa", device: str = "cpu") -> Namespace:
     return Namespace(
         unity_model_name="seamless_streaming_unity",
@@ -267,7 +276,7 @@ class SeamlessStreamingPipeline(BasePipeline):
         self._sample_rate = sample_rate
         self._agent: Any = None
         self._tgt_lang = "spa"
-        self._device = "cuda" if _has_cuda() else "cpu"
+        self._device = _resolve_device()
 
     @property
     def info(self) -> PipelineInfo:

@@ -67,7 +67,14 @@ class WhisperTTSPipeline(BasePipeline):
     def _load_model(self):  # type: ignore[no-untyped-def]
         from faster_whisper import WhisperModel
 
-        return WhisperModel(self._model_size, device="cpu", compute_type="int8")
+        from src.config import get_settings
+
+        settings = get_settings()
+        return WhisperModel(
+            self._model_size,
+            device=settings.compute_device,
+            compute_type=settings.resolved_compute_type(),
+        )
 
     async def _do_stop(self) -> None:
         self._model = None
