@@ -60,6 +60,7 @@ async function createFileMediaStream(file: File, sampleRate: number): Promise<Fi
 export function useAudioStream(options: AudioStreamOptions | null) {
   const [connected, setConnected] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [liveStats, setLiveStats] = useState<SessionStats | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, TranscriptLine[]>>({});
   const [metadata, setMetadata] = useState<Record<string, MetadataUpdate[]>>({});
@@ -100,26 +101,32 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     async function start() {
       const { sessionId, sampleRate, channels, audioSource, inputDeviceId, outputDeviceId } =
         options!;
+      setError(null);
 
       let inputStream: MediaStream;
       let fileDurationMs: number | null = null;
 
-      if (audioSource.type === "mic") {
-        inputStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            deviceId: inputDeviceId ? { exact: inputDeviceId } : undefined,
-            sampleRate: { ideal: sampleRate },
-            channelCount: { ideal: channels },
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-          },
-        });
-      } else if (audioSource.type === "file" && audioSource.file) {
-        const result = await createFileMediaStream(audioSource.file, sampleRate);
-        inputStream = result.stream;
-        fileDurationMs = result.durationMs;
-      } else {
+      try {
+        if (audioSource.type === "mic") {
+          inputStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              deviceId: inputDeviceId ? { exact: inputDeviceId } : undefined,
+              sampleRate: { ideal: sampleRate },
+              channelCount: { ideal: channels },
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+            },
+          });
+        } else if (audioSource.type === "file" && audioSource.file) {
+          const result = await createFileMediaStream(audioSource.file, sampleRate);
+          inputStream = result.stream;
+          fileDurationMs = result.durationMs;
+        } else {
+          return;
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "failed to open audio input");
         return;
       }
 
@@ -132,8 +139,9 @@ export function useAudioStream(options: AudioStreamOptions | null) {
       const transport = new WebRTCTransport(sessionId, inputStream, outputDeviceId);
       try {
         await transport.connect();
-      } catch {
+      } catch (err) {
         inputStream.getTracks().forEach((t) => t.stop());
+        setError(err instanceof Error ? err.message : "failed to connect transport");
         return;
       }
       if (cancelledRef.current) {
@@ -165,6 +173,9 @@ export function useAudioStream(options: AudioStreamOptions | null) {
       transport.onEvent((evt: TransportEvent) => {
         if (evt.type === "session.stats") {
           setLiveStats(evt.payload as unknown as SessionStats);
+        } else if (evt.type === "error") {
+          const detail = evt.payload.detail;
+          setError(typeof detail === "string" && detail ? detail : "stream error");
         } else if (evt.type === "pipeline.event" && evt.payload.kind === "transcript") {
           const streamName = (evt.payload.stream as string) || "transcript";
           const text = evt.payload.text as string;
@@ -196,5 +207,5 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     };
   }, [options?.sessionId]);
 
-  return { connected, muted, liveStats, transcripts, metadata, stop, toggleMute };
+  return { connected, muted, error, liveStats, transcripts, metadata, stop, toggleMute };
 }

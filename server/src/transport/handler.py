@@ -222,15 +222,16 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
             logger.info("transport events ended for session %s", session_id)
         elif stats_task in completed:
             raise RuntimeError("session stats task ended unexpectedly")
-    except Exception:
+    except Exception as exc:
         logger.exception("stream error for session %s", session_id)
+        detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
         try:
             async with asyncio.timeout(TRANSPORT_CLEANUP_TIMEOUT_SECONDS):
                 await transport.send_event(
                     TransportEvent(
                         type=EventType.ERROR,
                         session_id=session_id,
-                        payload={"detail": "stream error"},
+                        payload={"detail": detail},
                     )
                 )
         except Exception:
