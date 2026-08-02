@@ -1,3 +1,4 @@
+from ._pitch import PitchEstimate, PitchTracker, YinPitchTracker
 from .base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
 from .echo import EchoPipeline
 from .prosody_echo import ProsodyEchoPipeline
@@ -15,6 +16,8 @@ __all__ = [
     "OutputStreamDescriptor",
     "OutputStreamKind",
     "PipelineRegistry",
+    "PitchEstimate",
+    "PitchTracker",
     "ProsodyEchoPipeline",
     "ProsodyStage",
     "SpanishDirectPipeline",
@@ -22,5 +25,6 @@ __all__ = [
     "TTSStage",
     "TranslationStage",
     "WhisperTTSPipeline",
+    "YinPitchTracker",
     "create_default_registry",
 ]

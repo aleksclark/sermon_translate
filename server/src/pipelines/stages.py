@@ -15,6 +15,14 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 
 from src.models import MetadataEnvelope, MetadataKind, ProsodyFrame
+from src.pipelines._pitch import (
+    DEFAULT_F0_MAX_HZ,
+    DEFAULT_F0_MIN_HZ,
+    UNVOICED,
+    PitchTracker,
+    YinPitchTracker,
+    zero_crossing_rate,
+)
 
 
 @runtime_checkable
@@ -63,10 +71,11 @@ class ProsodyStage(Protocol):
 class BaselineProsodyStage:
     """Dependency-free prosody baseline computed from raw PCM using numpy.
 
-    Emits one :class:`ProsodyFrame` per fixed-size window with cheap features:
-    RMS energy, a zero-crossing-based rough pitch estimate, and silence-based
-    pause detection. This is explicitly a baseline reference, not tied to any
-    translation or TTS model.
+    Emits one :class:`ProsodyFrame` per fixed-size window carrying RMS energy,
+    silence-based pause detection, and a real fundamental-frequency estimate
+    delegated to a swappable :class:`~src.pipelines._pitch.PitchTracker`
+    (:class:`~src.pipelines._pitch.YinPitchTracker` by default). This is
+    explicitly a baseline reference, not tied to any translation or TTS model.
     """
 
     def __init__(
@@ -74,10 +83,26 @@ class BaselineProsodyStage:
         sample_rate: int = 48000,
         frame_ms: float = 100.0,
         silence_rms: float = 0.01,
+        pitch_tracker: PitchTracker | None = None,
+        f0_min_hz: float = DEFAULT_F0_MIN_HZ,
+        f0_max_hz: float = DEFAULT_F0_MAX_HZ,
     ) -> None:
+        if sample_rate <= 0:
+            raise ValueError("sample_rate must be positive")
+        if frame_ms <= 0.0:
+            raise ValueError("frame_ms must be positive")
+        if silence_rms < 0.0:
+            raise ValueError("silence_rms must be non-negative")
         self._sample_rate = sample_rate
         self._frame_ms = frame_ms
         self._silence_rms = silence_rms
+        self._pitch_tracker: PitchTracker = pitch_tracker or YinPitchTracker(
+            f0_min=f0_min_hz, f0_max=f0_max_hz
+        )
+
+    @property
+    def frame_samples(self) -> int:
+        return max(1, int(self._sample_rate * self._frame_ms / 1000.0))
 
     async def start(self) -> None: ...
 
@@ -85,59 +110,64 @@ class BaselineProsodyStage:
 
     def frame_features(self, frame: np.ndarray) -> ProsodyFrame:
         if frame.size == 0:
-            return ProsodyFrame(energy=0.0, is_pause=True, f0_hz=0.0, confidence=1.0)
+            return ProsodyFrame(
+                energy=0.0,
+                is_pause=True,
+                f0_hz=None,
+                pitch_confidence=0.0,
+                boundary="pause",
+                confidence=1.0,
+                features={"zero_crossing_rate": 0.0, "voiced": 0.0},
+            )
+
         energy = float(np.sqrt(np.mean(np.square(frame))))
         is_pause = energy < self._silence_rms
-        if is_pause:
-            f0 = 0.0
-        else:
-            signs = np.signbit(frame)
-            crossings = int(np.count_nonzero(signs[1:] != signs[:-1]))
-            duration = frame.size / self._sample_rate
-            f0 = (crossings / 2.0) / duration if duration > 0 else 0.0
+        pitch = UNVOICED if is_pause else self._pitch_tracker.estimate(frame, self._sample_rate)
         return ProsodyFrame(
             energy=energy,
             is_pause=is_pause,
-            f0_hz=f0,
+            f0_hz=pitch.f0_hz,
+            pitch_confidence=pitch.confidence,
             boundary="pause" if is_pause else None,
             confidence=1.0,
+            features={
+                "zero_crossing_rate": zero_crossing_rate(frame, self._sample_rate),
+                "voiced": float(pitch.voiced),
+            },
+        )
+
+    def _duration_ms(self, samples: int) -> float:
+        return samples / self._sample_rate * 1000.0
+
+    def _envelope(
+        self, frame: np.ndarray, stream_name: str, sequence: int, start_ms: float
+    ) -> MetadataEnvelope:
+        return MetadataEnvelope(
+            stream=stream_name,
+            kind=MetadataKind.PROSODY,
+            sequence=sequence,
+            start_ms=start_ms,
+            end_ms=start_ms + self._duration_ms(frame.size),
+            prosody=self.frame_features(frame),
         )
 
     async def analyze(
         self, audio_stream: AsyncIterator[bytes], stream_name: str
     ) -> AsyncIterator[MetadataEnvelope]:
-        frame_samples = max(1, int(self._sample_rate * self._frame_ms / 1000.0))
-        buffer = np.array([], dtype=np.float32)
+        frame_samples = self.frame_samples
+        buffer = np.zeros(0, dtype=np.float32)
         sequence = 0
         emitted_ms = 0.0
-        ms_per_frame = frame_samples / self._sample_rate * 1000.0
 
         async for chunk in audio_stream:
             pcm = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
             buffer = np.concatenate([buffer, pcm])
             while buffer.size >= frame_samples:
-                frame = buffer[:frame_samples]
-                buffer = buffer[frame_samples:]
-                start_ms = emitted_ms
-                emitted_ms += ms_per_frame
-                yield MetadataEnvelope(
-                    stream=stream_name,
-                    kind=MetadataKind.PROSODY,
-                    sequence=sequence,
-                    start_ms=start_ms,
-                    end_ms=emitted_ms,
-                    prosody=self.frame_features(frame),
-                )
+                frame, buffer = buffer[:frame_samples], buffer[frame_samples:]
+                envelope = self._envelope(frame, stream_name, sequence, emitted_ms)
+                emitted_ms += self._duration_ms(frame.size)
                 sequence += 1
+                yield envelope
 
         if buffer.size > 0:
-            start_ms = emitted_ms
-            end_ms = emitted_ms + buffer.size / self._sample_rate * 1000.0
-            yield MetadataEnvelope(
-                stream=stream_name,
-                kind=MetadataKind.PROSODY,
-                sequence=sequence,
-                start_ms=start_ms,
-                end_ms=end_ms,
-                prosody=self.frame_features(buffer),
-            )
+            yield self._envelope(buffer, stream_name, sequence, emitted_ms)

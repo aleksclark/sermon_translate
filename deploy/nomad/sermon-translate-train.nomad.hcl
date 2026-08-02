@@ -11,6 +11,10 @@
 # GPU-hungry; verify node-6 has free CPU/RAM/VRAM before running, and prefer
 # claiming both GPUs only when the inference job is NOT scheduled there.
 #
+# PREREQUISITE: node-6 currently advertises neither the docker `nvidia` runtime
+# nor any Nomad `nvidia/gpu` devices. Run deploy/scripts/preflight-gpu.sh and
+# choose a `gpu_mode` matching what the node actually advertises.
+#
 # WHERE THE REAL TRAINER GOES: replace the placeholder `args` command below with
 # your training entrypoint (e.g. `uv run python -m src.training.finetune ...`).
 # Add that module to the training image; do not commit training scripts here
@@ -27,6 +31,33 @@ variable "gpu_count" {
   type        = number
   description = "GPUs to claim for training: 1 (16 GB) or 2 (32 GB, model/data parallel)."
   default     = 1
+}
+
+variable "gpu_mode" {
+  type        = string
+  description = <<-EOT
+    How GPUs are attached.
+
+    "device"  - request GPUs from the Nomad nvidia device plugin. Correct and
+                preferred, but the job stays pending forever if the plugin is
+                not running on the client.
+    "runtime" - no device stanza; rely on the docker `nvidia` runtime and
+                NVIDIA_VISIBLE_DEVICES. Use only when the device plugin is
+                unavailable. Nomad does not track GPU usage in this mode, so a
+                training run can silently contend with inference for a GPU.
+  EOT
+  default     = "device"
+
+  validation {
+    condition     = contains(["device", "runtime"], var.gpu_mode)
+    error_message = "The gpu_mode variable must be either \"device\" or \"runtime\"."
+  }
+}
+
+variable "visible_devices" {
+  type        = string
+  description = "NVIDIA_VISIBLE_DEVICES when gpu_mode is \"runtime\" (e.g. \"0\" or \"0,1\")."
+  default     = "all"
 }
 
 variable "host_volume" {
@@ -98,22 +129,31 @@ job "sermon-translate-train" {
         cpu    = 4000
         memory = 16384
 
-        device "nvidia/gpu" {
-          count = var.gpu_count
+        dynamic "device" {
+          for_each = var.gpu_mode == "device" ? ["nvidia/gpu"] : []
+          iterator = gpu
+          labels   = [gpu.value]
 
-          constraint {
-            attribute = "${device.attr.memory}"
-            operator  = ">="
-            value     = "16000 MiB"
+          content {
+            count = var.gpu_count
+
+            constraint {
+              attribute = "${device.attr.memory}"
+              operator  = ">="
+              value     = "16000 MiB"
+            }
           }
         }
       }
 
       env {
-        # NVIDIA_VISIBLE_DEVICES is set by the nvidia device plugin to the
-        # assigned GPUs; the runtime exposes exactly those, re-indexed from 0.
-        # Do NOT set CUDA_VISIBLE_DEVICES=all (CUDA rejects "all" and masks
-        # every GPU). Leave it unset, or pin an ordinal for single-GPU runs.
+        # In "device" mode the plugin sets NVIDIA_VISIBLE_DEVICES to the
+        # assigned GPUs; in "runtime" mode nothing assigns them, so it is set
+        # explicitly here. Do NOT set CUDA_VISIBLE_DEVICES=all (CUDA rejects
+        # "all" and masks every GPU). Leave it unset, or pin an ordinal for
+        # single-GPU runs.
+        NVIDIA_VISIBLE_DEVICES = var.gpu_mode == "runtime" ? var.visible_devices : ""
+
         COMPUTE_DEVICE = "cuda"
         HF_HOME        = "/workspace/hf"
         DATA_DIR       = "/workspace/datasets"

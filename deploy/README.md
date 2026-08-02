@@ -18,15 +18,26 @@ V100 GPUs.
 | RAM          | ~32 GB                                                  |
 | GPUs         | **2 × Tesla V100-SXM2-16GB** (Volta, sm_70)            |
 | **VRAM**     | **2 × 16 GB = 32 GB total**                            |
-| Docker       | driver runtimes `io.containerd.runc.v2, nvidia, runc` |
+| Docker       | driver runtimes `io.containerd.runc.v2, runc` — **no `nvidia` runtime** |
+| Nomad devices| **none advertised** — the `nvidia/gpu` device plugin is not running |
 | Node meta    | `gpu=true`, `gpu_count=2`, `gpu_type=v100-sxm2-16gb`, `ram_gb=32`, `compute=true` |
 | Host volumes | `local-data` (`/data/disk0`), `moosefs` (`/mnt/moosefs`), `moosefs-configs`, `moosefs-family`, `moosefs-media` |
+
+> **Verified state (read-only query against the live cluster).** The GPUs are
+> physically present and declared in node meta, but node-6 is **not yet
+> provisioned for GPU containers**: Docker has no `nvidia` runtime registered
+> and Nomad advertises zero devices. By contrast `node-5` (192.168.0.9) *does*
+> have the `nvidia` docker runtime but no GPU meta and no devices. Until node-6
+> is provisioned, a GPU job submitted in `device` mode will sit `pending`
+> forever. Run the preflight script below before submitting anything.
 
 ## Files
 
 ```
 deploy/
   README.md                              this file
+  scripts/
+    preflight-gpu.sh                     read-only prerequisite/capacity check
   nomad/
     sermon-translate-gpu.nomad.hcl       GPU inference service (1 or 2 GPUs)
     sermon-translate-train.nomad.hcl     GPU training/fine-tune BATCH template
@@ -35,16 +46,73 @@ server/
   Dockerfile                             existing CPU image (unchanged)
 ```
 
+## Step 1: run the preflight check (required)
+
+```sh
+NOMAD_ADDR=http://192.168.0.99:4646 deploy/scripts/preflight-gpu.sh node-6
+```
+
+The script performs **GET-only** Nomad API queries. It never submits, plans,
+stops, or drains anything, so it is safe against a cluster with live workloads.
+It checks node reachability/readiness/eligibility, whether the `nvidia` docker
+runtime is registered, whether the device plugin actually advertises
+`nvidia/gpu` devices and their VRAM, and free CPU/RAM headroom versus the job
+reservations. It also lists the jobs already co-located on the node.
+
+Tune the expectations with `GPU_COUNT`, `TASK_CPU`, `TASK_MEMORY`,
+`MIN_VRAM_MIB`; authenticate with `NOMAD_TOKEN` if ACLs are enabled.
+
+| Result | Meaning |
+|--------|---------|
+| `PASS` | Prerequisite satisfied. |
+| `WARN` | Non-blocking; review before submitting (e.g. a GPU reports less VRAM than the constraint demands). Exit code 0. |
+| `FAIL` | Blocking. Submitting now will fail or hang. Exit code 1. |
+
+### Why the docker `nvidia` runtime is not sufficient
+
+These are two independent mechanisms, and they fail in different ways:
+
+- The **docker `nvidia` runtime** is what actually exposes GPU device nodes
+  and driver libraries *inside* the container. Without it, the container
+  starts but sees no GPU and silently falls back to CPU.
+- The **Nomad `nvidia` device plugin** is what *fingerprints* GPUs and reports
+  them to the scheduler as assignable `nvidia/gpu` devices. A
+  `device "nvidia/gpu"` stanza is a scheduling constraint: if no node
+  advertises a matching device, the evaluation simply finds no feasible
+  placement and the allocation stays `pending` with no error on the task.
+
+So the runtime alone cannot satisfy a device stanza, and the plugin alone
+cannot give the container GPU access. GPU scheduling in `device` mode needs
+both.
+
+### If the device plugin is missing
+
+Enabling the Nomad nvidia device plugin on the node-6 client is an
+operator/host action performed outside this repo (install
+`nomad-device-nvidia`, add a matching `plugin "nvidia-gpu"` block to the client
+configuration, and restart the agent). This repo intentionally does not touch
+host configuration.
+
+Until that is done, both job specs accept `-var gpu_mode=runtime`, which drops
+the device stanza and relies on the docker `nvidia` runtime plus an explicit
+`NVIDIA_VISIBLE_DEVICES`. That still requires the runtime to be registered on
+the node. Note the tradeoff: in `runtime` mode Nomad does **not** track GPU
+consumption, so nothing prevents two jobs from contending for the same GPU —
+keep GPU placement manual and deliberate in that mode.
+
 ## Operator prerequisites (host side — NOT configured here)
 
 These must already be true on the node-6 Nomad client. This repo does **not**
-configure the host:
+configure the host. As of the last verified check, items 1 and 2 are **not
+satisfied** on node-6:
 
-1. **NVIDIA driver + `nvidia` container runtime** registered with Docker
-   (already present per `docker` driver runtimes above).
+1. **NVIDIA driver + `nvidia` container runtime** registered with Docker.
+   Currently **absent** on node-6 (present on node-5). Required in both
+   `device` and `runtime` GPU modes.
 2. **Nomad `nvidia` device plugin** enabled on the client so that the
-   `device "nvidia/gpu"` stanza can fingerprint and assign GPUs. Without it the
-   job will stay `pending` (unplaceable) — it will not error loudly.
+   `device "nvidia/gpu"` stanza can fingerprint and assign GPUs. Currently
+   **absent** — the node advertises no devices. Without it a `device`-mode job
+   stays `pending` (unplaceable) rather than erroring loudly.
 3. The GPU image (`server/Dockerfile.gpu`) built and pushed to a registry the
    node can pull from.
 
@@ -93,11 +161,25 @@ pipeline is unavailable. This keeps the image smaller and the build simpler.
 
 ## Running the inference job
 
+Run the preflight check first and let it tell you which `gpu_mode` the node can
+actually satisfy.
+
 ```bash
-# Verify node-6 capacity FIRST (see safety note).
+# 1. Read-only prerequisite + capacity check.
+NOMAD_ADDR=http://192.168.0.99:4646 deploy/scripts/preflight-gpu.sh node-6
+
+# 2. Submit. Default gpu_mode=device requires the nvidia device plugin.
 nomad job run \
   -var 'image=<registry>/sermon-translate-server:gpu' \
   -var 'crosstalk_base_url=https://crosstalk.example' \
+  deploy/nomad/sermon-translate-gpu.nomad.hcl
+
+# Fallback while the device plugin is unavailable (needs the docker
+# nvidia runtime, and Nomad will not track GPU usage in this mode):
+nomad job run \
+  -var 'image=<registry>/sermon-translate-server:gpu' \
+  -var 'gpu_mode=runtime' \
+  -var 'visible_devices=0' \
   deploy/nomad/sermon-translate-gpu.nomad.hcl
 ```
 
@@ -120,6 +202,8 @@ resources {
   cpu    = 4000
   memory = 12288
 
+  # Emitted only when gpu_mode = "device"; omitted entirely in "runtime" mode
+  # so an unsatisfiable device request cannot block placement.
   device "nvidia/gpu" {
     count = var.gpu_count        # 1 = single V100 (16 GB); 2 = both (32 GB)
 
@@ -152,12 +236,19 @@ template**. Nomad runs it to completion and stops. It mounts a node-6 host
 volume for datasets and checkpoints and claims 1 or 2 GPUs.
 
 ```bash
+NOMAD_ADDR=http://192.168.0.99:4646 \
+  GPU_COUNT=1 TASK_MEMORY=16384 deploy/scripts/preflight-gpu.sh node-6
+
 nomad job run \
   -var 'image=<registry>/sermon-translate-trainer:gpu' \
   -var 'gpu_count=1' \
   -var 'host_volume=local-data' \
   deploy/nomad/sermon-translate-train.nomad.hcl
 ```
+
+The training job accepts the same `gpu_mode` / `visible_devices` variables as
+the inference job. In `runtime` mode Nomad will not stop a training run from
+sharing a GPU with inference, so pin `visible_devices` deliberately.
 
 **Where the real trainer goes:** the job ships a *placeholder* command
 (`nvidia-smi` + workspace listing). Replace the `config { command / args }` in
@@ -237,10 +328,19 @@ node-6 has only **8 CPU cores and ~32 GB RAM**. The inference job reserves
 and confirm you are not starving the services above. Do not run the inference
 job and a 2-GPU training job on node-6 at the same time.
 
+`deploy/scripts/preflight-gpu.sh` reports free CPU/RAM versus these
+reservations and lists the co-located jobs, but the final judgement is the
+operator's: reservations are floors, and real usage can exceed them.
+
 ## Validation performed
 
 - `nomad fmt` — both HCL files formatted (idempotent, no diff).
 - `nomad job validate` — run against an **unreachable** agent
   (`NOMAD_ADDR=http://127.0.0.1:1`) so only the **local HCL parse/structural
   validation** ran; **no cluster contact, no plan, no submit**. Both files
-  report "Job validation successful".
+  validate successfully in **both** `gpu_mode=device` and `gpu_mode=runtime`,
+  and an invalid `gpu_mode` is rejected by the variable validation rule.
+- `bash -n` syntax check on `deploy/scripts/preflight-gpu.sh`.
+- Node capability facts in this document were confirmed with **read-only**
+  Nomad node queries. No job was submitted, planned, or modified, and nothing
+  running on node-6 was touched.

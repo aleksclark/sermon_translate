@@ -1,13 +1,18 @@
 # GPU inference job for the sermon-translate server.
 #
-# Runs the translation server on node-6 with one Tesla V100 (16 GB) attached via
-# the Nomad nvidia device plugin. A 2-GPU variant is documented inline below.
+# Runs the translation server on node-6 with Tesla V100 (16 GB) GPUs attached.
 #
 # node-6 facts (2x Tesla V100-SXM2-16GB, 8-core Xeon E5-1620 v4, ~32 GB RAM).
 # Total GPU memory on the node is 2 x 16 GB = 32 GB VRAM; a single task here
-# requests ONE GPU (16 GB VRAM). Reserve capacity for existing node-6 workloads
-# (traefik, syncthing, coredns, emqx, otel, idrive, temp-exporter) before
-# submitting -- see deploy/README.md.
+# requests ONE GPU (16 GB VRAM) by default. Reserve capacity for existing
+# node-6 workloads (traefik, syncthing, coredns, emqx, otel, idrive,
+# temp-exporter) before submitting -- see deploy/README.md.
+#
+# PREREQUISITE: node-6 is NOT currently provisioned for GPU containers. As
+# verified read-only against the cluster, it advertises neither the docker
+# `nvidia` runtime nor any Nomad `nvidia/gpu` devices; only node Meta claims
+# GPUs. Run deploy/scripts/preflight-gpu.sh before submitting and pick a
+# `gpu_mode` that matches what the node actually advertises.
 #
 # SAFETY: this file only DECLARES the job. Submitting it (`nomad job run`) will
 # schedule a container onto node-6 alongside the workloads above. Verify free
@@ -49,6 +54,33 @@ variable "gpu_count" {
   type        = number
   description = "GPUs to attach (1 fits a single V100; set 2 to reserve both)."
   default     = 1
+}
+
+variable "gpu_mode" {
+  type        = string
+  description = <<-EOT
+    How GPUs are attached.
+
+    "device"  - request GPUs from the Nomad nvidia device plugin. Correct and
+                preferred, but the job stays pending forever if the plugin is
+                not running on the client.
+    "runtime" - no device stanza; rely on the docker `nvidia` runtime and
+                NVIDIA_VISIBLE_DEVICES. Use only when the device plugin is
+                unavailable. Nomad does not track GPU usage in this mode, so
+                two such jobs can silently contend for the same GPU.
+  EOT
+  default     = "device"
+
+  validation {
+    condition     = contains(["device", "runtime"], var.gpu_mode)
+    error_message = "The gpu_mode variable must be either \"device\" or \"runtime\"."
+  }
+}
+
+variable "visible_devices" {
+  type        = string
+  description = "NVIDIA_VISIBLE_DEVICES when gpu_mode is \"runtime\" (e.g. \"0\" or \"0,1\")."
+  default     = "all"
 }
 
 job "sermon-translate-gpu" {
@@ -106,28 +138,40 @@ job "sermon-translate-gpu" {
       # Request GPUs from the nvidia device plugin. One V100 = 16 GB VRAM.
       # For the 2-GPU variant, set the `gpu_count` variable to 2 (both V100s,
       # 32 GB total) -- only do this if no other GPU workload needs node-6.
+      # Skipped entirely when gpu_mode is "runtime", because a device stanza
+      # the plugin cannot satisfy blocks placement instead of failing loudly.
       resources {
         cpu    = 4000
         memory = 12288
 
-        device "nvidia/gpu" {
-          count = var.gpu_count
+        dynamic "device" {
+          for_each = var.gpu_mode == "device" ? ["nvidia/gpu"] : []
+          iterator = gpu
+          labels   = [gpu.value]
 
-          constraint {
-            attribute = "${device.attr.memory}"
-            operator  = ">="
-            value     = "16000 MiB"
+          content {
+            count = var.gpu_count
+
+            constraint {
+              attribute = "${device.attr.memory}"
+              operator  = ">="
+              value     = "16000 MiB"
+            }
           }
         }
       }
 
       env {
-        # The nvidia device plugin sets NVIDIA_VISIBLE_DEVICES to the assigned
-        # GPU IDs; the nvidia runtime then exposes exactly those GPUs to the
-        # container, re-indexed from 0. Do NOT set CUDA_VISIBLE_DEVICES=all --
-        # CUDA rejects the literal "all" and would mask every GPU. Leave it
-        # unset so CUDA sees all injected devices, or pin an ordinal
-        # (e.g. CUDA_VISIBLE_DEVICES=0) to use one GPU out of the assigned set.
+        # In "device" mode the plugin sets NVIDIA_VISIBLE_DEVICES to the
+        # assigned GPU IDs; in "runtime" mode nothing assigns them, so it is
+        # set explicitly here. Either way the nvidia runtime exposes exactly
+        # those GPUs to the container, re-indexed from 0.
+        #
+        # Do NOT set CUDA_VISIBLE_DEVICES=all -- CUDA rejects the literal "all"
+        # and would mask every GPU. Leave it unset so CUDA sees all injected
+        # devices, or pin an ordinal (e.g. CUDA_VISIBLE_DEVICES=0).
+        NVIDIA_VISIBLE_DEVICES = var.gpu_mode == "runtime" ? var.visible_devices : ""
+
         COMPUTE_DEVICE = "cuda"
 
         CROSSTALK_BASE_URL = var.crosstalk_base_url

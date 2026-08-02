@@ -10,17 +10,12 @@ from aiortc import RTCPeerConnection
 from src.config import Settings, get_settings
 
 from .crosstalk import CrosstalkTransport
-from .crosstalk_client import CrosstalkClient, WebSocketConnection
+from .crosstalk_client import CrosstalkClient, WebSocketFactory
 from .handler import run_session
 from .ice import build_rtc_configuration
+from .websocket_client import connect_websocket
 
 logger = logging.getLogger(__name__)
-
-
-async def _default_ws_factory(url: str) -> WebSocketConnection:
-    raise RuntimeError(
-        "no websocket client configured; inject a ws_factory to use live Crosstalk media"
-    )
 
 
 class CrosstalkService:
@@ -36,10 +31,12 @@ class CrosstalkService:
         *,
         client: CrosstalkClient | None = None,
         http_client: httpx.AsyncClient | None = None,
+        ws_factory: WebSocketFactory | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._http = http_client
         self._client = client
+        self._ws_factory: WebSocketFactory = ws_factory or connect_websocket
         self._runners: dict[str, asyncio.Task[None]] = {}
 
     def configured(self) -> bool:
@@ -67,7 +64,7 @@ class CrosstalkService:
             self._settings.crosstalk_username,
             self._settings.crosstalk_password,
             http_client=self._http,
-            ws_factory=_default_ws_factory,
+            ws_factory=self._ws_factory,
             peer_factory=self._peer_factory,
             allow_private_hosts=self._settings.crosstalk_allow_private_hosts,
             request_timeout=self._settings.crosstalk_request_timeout,
