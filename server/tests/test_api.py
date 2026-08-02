@@ -34,6 +34,28 @@ class TestPipelinesEndpoint:
         data = r.json()
         assert len(data) >= 1
         assert data[0]["id"] == "echo"
+        assert any(p["id"] == "composed" for p in data)
+
+
+class TestStagesEndpoint:
+    async def test_list_stages(self, client: AsyncClient) -> None:
+        r = await client.get("/api/stages")
+        assert r.status_code == 200
+        data = r.json()
+        ids = {s["id"] for s in data}
+        assert {
+            "passthrough-listen",
+            "passthrough-translate",
+            "passthrough-speak",
+            "baseline-prosody",
+        } <= ids
+
+    async def test_list_stages_filter_kind(self, client: AsyncClient) -> None:
+        r = await client.get("/api/stages", params={"kind": "listen"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data
+        assert all(s["kind"] == "listen" for s in data)
 
 
 class TestSessionsEndpoint:
@@ -44,9 +66,75 @@ class TestSessionsEndpoint:
         assert data["pipeline_id"] == "echo"
         assert data["label"] == "test"
         assert data["status"] == "created"
+        assert data["stages"] is None
 
     async def test_create_session_bad_pipeline(self, client: AsyncClient) -> None:
         r = await client.post("/api/sessions", json={"pipeline_id": "nope"})
+        assert r.status_code == 400
+
+    async def test_create_composed_session(self, client: AsyncClient) -> None:
+        r = await client.post(
+            "/api/sessions",
+            json={
+                "pipeline_id": "composed",
+                "stages": {
+                    "listen": "passthrough-listen",
+                    "translate": "passthrough-translate",
+                    "speak": "passthrough-speak",
+                    "prosody": "baseline-prosody",
+                },
+            },
+        )
+        assert r.status_code == 201
+        data = r.json()
+        assert data["pipeline_id"] == "composed"
+        assert data["stages"]["listen"] == "passthrough-listen"
+        assert data["stages"]["prosody"] == "baseline-prosody"
+
+    async def test_create_composed_requires_stages(self, client: AsyncClient) -> None:
+        r = await client.post("/api/sessions", json={"pipeline_id": "composed"})
+        assert r.status_code == 400
+
+    async def test_create_composed_rejects_unknown_stage(self, client: AsyncClient) -> None:
+        r = await client.post(
+            "/api/sessions",
+            json={
+                "pipeline_id": "composed",
+                "stages": {
+                    "listen": "missing-listen",
+                    "translate": "passthrough-translate",
+                    "speak": "passthrough-speak",
+                },
+            },
+        )
+        assert r.status_code == 400
+
+    async def test_create_composed_rejects_wrong_kind(self, client: AsyncClient) -> None:
+        r = await client.post(
+            "/api/sessions",
+            json={
+                "pipeline_id": "composed",
+                "stages": {
+                    "listen": "passthrough-translate",
+                    "translate": "passthrough-translate",
+                    "speak": "passthrough-speak",
+                },
+            },
+        )
+        assert r.status_code == 400
+
+    async def test_legacy_pipeline_rejects_stages(self, client: AsyncClient) -> None:
+        r = await client.post(
+            "/api/sessions",
+            json={
+                "pipeline_id": "echo",
+                "stages": {
+                    "listen": "passthrough-listen",
+                    "translate": "passthrough-translate",
+                    "speak": "passthrough-speak",
+                },
+            },
+        )
         assert r.status_code == 400
 
     async def test_list_sessions(self, client: AsyncClient) -> None:

@@ -12,13 +12,45 @@ from src.models import (
     Session,
     SessionCreate,
     SessionUpdate,
+    StageInfo,
+    StageKind,
+    StageSelection,
 )
 
-from .deps import get_pipeline_registry, get_server_stats, get_session_store
+from .deps import (
+    get_pipeline_registry,
+    get_server_stats,
+    get_session_store,
+    get_stage_registry,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
+
+COMPOSED_PIPELINE_ID = "composed"
+
+
+def _validate_stage_id(stage_id: str, expected_kind: StageKind) -> None:
+    factory = get_stage_registry().get(stage_id)
+    if factory is None:
+        raise HTTPException(status_code=400, detail=f"Unknown stage: {stage_id}")
+    if factory.info.kind != expected_kind:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Stage {stage_id} has kind {factory.info.kind.value}, "
+                f"expected {expected_kind.value}"
+            ),
+        )
+
+
+def _validate_stage_selection(stages: StageSelection) -> None:
+    _validate_stage_id(stages.listen, StageKind.LISTEN)
+    _validate_stage_id(stages.translate, StageKind.TRANSLATE)
+    _validate_stage_id(stages.speak, StageKind.SPEAK)
+    if stages.prosody is not None:
+        _validate_stage_id(stages.prosody, StageKind.PROSODY)
 
 
 @router.get("/stats", response_model=ServerStats)
@@ -34,11 +66,30 @@ async def list_pipelines() -> list[PipelineInfo]:
     return get_pipeline_registry().list_all()
 
 
+@router.get("/stages", response_model=list[StageInfo])
+async def list_stages(kind: StageKind | None = None) -> list[StageInfo]:
+    return get_stage_registry().list_all(kind)
+
+
 @router.post("/sessions", response_model=Session, status_code=201)
 async def create_session(req: SessionCreate) -> Session:
     registry = get_pipeline_registry()
     if registry.get(req.pipeline_id) is None:
         raise HTTPException(status_code=400, detail=f"Unknown pipeline: {req.pipeline_id}")
+
+    if req.pipeline_id == COMPOSED_PIPELINE_ID:
+        if req.stages is None:
+            raise HTTPException(
+                status_code=400,
+                detail="stages are required when pipeline_id is 'composed'",
+            )
+        _validate_stage_selection(req.stages)
+    elif req.stages is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="stages are only valid when pipeline_id is 'composed'",
+        )
+
     store = get_session_store()
     session = store.create(req)
     tracker = get_server_stats()

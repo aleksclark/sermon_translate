@@ -3,6 +3,8 @@ import type {
   ServerStats,
   Session,
   SessionCreate,
+  StageInfo,
+  StageKind,
 } from "./types.gen.ts";
 
 const BASE = "/api";
@@ -21,6 +23,14 @@ export async function fetchServerStats(): Promise<ServerStats> {
 
 export async function fetchPipelines(): Promise<PipelineInfo[]> {
   return json<PipelineInfo[]>(await fetch(`${BASE}/pipelines`));
+}
+
+export async function fetchStages(kind?: StageKind): Promise<StageInfo[]> {
+  const url =
+    kind === undefined
+      ? `${BASE}/stages`
+      : `${BASE}/stages?kind=${encodeURIComponent(kind)}`;
+  return json<StageInfo[]>(await fetch(url));
 }
 
 export async function fetchSessions(): Promise<Session[]> {

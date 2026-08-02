@@ -4,6 +4,8 @@ export type SessionStatus = "created" | "active" | "paused" | "closed";
 
 export type AudioSource = "webrtc" | "crosstalk";
 
+export type StageKind = "listen" | "translate" | "speak" | "prosody";
+
 export interface OutputStreamInfo {
   name: string;
   kind: string;
@@ -17,6 +19,22 @@ export interface PipelineInfo {
   output_streams: OutputStreamInfo[];
 }
 
+export interface StageInfo {
+  id: string;
+  kind: StageKind;
+  name: string;
+  description: string;
+  requires_gpu: boolean;
+  default_for_kind: boolean;
+}
+
+export interface StageSelection {
+  listen: string;
+  translate: string;
+  speak: string;
+  prosody: string | null;
+}
+
 export interface SessionCreate {
   pipeline_id: string;
   sample_rate?: number;
@@ -25,6 +43,7 @@ export interface SessionCreate {
   audio_context_seconds?: number;
   audio_source?: AudioSource;
   crosstalk_session_id?: string | null;
+  stages?: StageSelection | null;
 }
 
 export interface SessionUpdate {
@@ -52,6 +71,7 @@ export interface Session {
   audio_context_seconds: number;
   audio_source: AudioSource;
   crosstalk_session_id: string | null;
+  stages: StageSelection | null;
   created_at: number;
   stats: SessionStats;
 }

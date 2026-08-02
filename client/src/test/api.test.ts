@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   fetchServerStats,
   fetchPipelines,
+  fetchStages,
   fetchSessions,
   fetchSession,
   createSession,
@@ -36,6 +37,29 @@ describe("api client", () => {
     globalThis.fetch = mockFetch(data);
     const result = await fetchPipelines();
     expect(result).toEqual(data);
+  });
+
+  it("fetchStages calls /api/stages", async () => {
+    const data = [
+      {
+        id: "passthrough-listen",
+        kind: "listen",
+        name: "Passthrough Listen",
+        description: "stub",
+        requires_gpu: false,
+        default_for_kind: true,
+      },
+    ];
+    globalThis.fetch = mockFetch(data);
+    const result = await fetchStages();
+    expect(result).toEqual(data);
+    expect(fetch).toHaveBeenCalledWith("/api/stages");
+  });
+
+  it("fetchStages supports kind filter", async () => {
+    globalThis.fetch = mockFetch([]);
+    await fetchStages("listen");
+    expect(fetch).toHaveBeenCalledWith("/api/stages?kind=listen");
   });
 
   it("fetchSessions calls /api/sessions", async () => {

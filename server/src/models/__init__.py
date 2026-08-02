@@ -17,6 +17,9 @@ from .session import (
     SessionStats,
     SessionStatus,
     SessionUpdate,
+    StageInfo,
+    StageKind,
+    StageSelection,
 )
 from .stats import ServerStats, ServerStatsTracker
 
@@ -38,5 +41,8 @@ __all__ = [
     "SessionStats",
     "SessionStatus",
     "SessionUpdate",
+    "StageInfo",
+    "StageKind",
+    "StageSelection",
     "SynthesisInstructions",
 ]

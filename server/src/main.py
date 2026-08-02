@@ -51,7 +51,13 @@ def create_app() -> FastAPI:
     registry = create_default_registry()
     stats = ServerStatsTracker()
     crosstalk_service = CrosstalkService()
-    init_deps(store, registry, stats, crosstalk_service)
+    init_deps(
+        store,
+        registry,
+        stats,
+        crosstalk_service,
+        stage_registry=registry.stage_registry,
+    )
 
     app.include_router(api_router)
     app.include_router(crosstalk_router)

@@ -29,14 +29,20 @@ from src.models import (
     SessionStats,
     SessionStatus,
     SessionUpdate,
+    StageInfo,
+    StageKind,
+    StageSelection,
     SynthesisInstructions,
 )
 
 SHARED_MODELS: list[type] = [
     SessionStatus,
     AudioSource,
+    StageKind,
     OutputStreamInfo,
     PipelineInfo,
+    StageInfo,
+    StageSelection,
     SessionCreate,
     SessionUpdate,
     SessionStats,

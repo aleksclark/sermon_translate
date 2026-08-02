@@ -7,6 +7,9 @@ import type {
   OutputStreamInfo,
   SessionStatus,
   SessionUpdate,
+  StageInfo,
+  StageKind,
+  StageSelection,
 } from "../api/types.gen.ts";
 
 describe("generated types", () => {
@@ -21,6 +24,7 @@ describe("generated types", () => {
       audio_context_seconds: 0,
       audio_source: "webrtc",
       crosstalk_session_id: null,
+      stages: null,
       created_at: Date.now(),
       stats: {
         bytes_received: 0,
@@ -40,6 +44,25 @@ describe("generated types", () => {
     const req: SessionCreate = { pipeline_id: "echo" };
     expect(req.pipeline_id).toBe("echo");
     expect(req.sample_rate).toBeUndefined();
+  });
+
+  it("StageSelection and StageInfo shapes compile", () => {
+    const selection: StageSelection = {
+      listen: "passthrough-listen",
+      translate: "passthrough-translate",
+      speak: "passthrough-speak",
+      prosody: "baseline-prosody",
+    };
+    const kind: StageKind = "listen";
+    const info: StageInfo = {
+      id: "passthrough-listen",
+      kind,
+      name: "Passthrough Listen",
+      description: "stub",
+      requires_gpu: false,
+      default_for_kind: true,
+    };
+    expect(selection.listen).toBe(info.id);
   });
 
   it("SessionUpdate allows all optional", () => {

@@ -4,10 +4,12 @@ import logging
 
 from src.models import PipelineInfo
 from src.pipelines.base import BasePipeline
+from src.pipelines.composed import ComposedPipeline
 from src.pipelines.echo import EchoPipeline
 from src.pipelines.prosody_echo import ProsodyEchoPipeline
 from src.pipelines.spanish import SpanishTranslationPipeline
 from src.pipelines.spanish_direct import SpanishDirectPipeline
+from src.pipelines.stage_registry import StageRegistry, create_default_stage_registry
 from src.pipelines.whisper_tts import WhisperTTSPipeline
 
 logger = logging.getLogger(__name__)
@@ -16,8 +18,9 @@ logger = logging.getLogger(__name__)
 class PipelineRegistry:
     """Central registry of available translation pipelines."""
 
-    def __init__(self) -> None:
+    def __init__(self, stage_registry: StageRegistry | None = None) -> None:
         self._pipelines: dict[str, BasePipeline] = {}
+        self.stage_registry = stage_registry or StageRegistry()
 
     def register(self, pipeline: BasePipeline) -> None:
         self._pipelines[pipeline.info.id] = pipeline
@@ -32,13 +35,17 @@ class PipelineRegistry:
         return len(self._pipelines)
 
 
-def create_default_registry() -> PipelineRegistry:
-    registry = PipelineRegistry()
+def create_default_registry(
+    stage_registry: StageRegistry | None = None,
+) -> PipelineRegistry:
+    stages = stage_registry or create_default_stage_registry()
+    registry = PipelineRegistry(stage_registry=stages)
     registry.register(EchoPipeline())
     registry.register(ProsodyEchoPipeline())
     registry.register(WhisperTTSPipeline())
     registry.register(SpanishTranslationPipeline())
     registry.register(SpanishDirectPipeline())
+    registry.register(ComposedPipeline(stages))
     try:
         from src.pipelines.seamless_streaming import SeamlessStreamingPipeline
 

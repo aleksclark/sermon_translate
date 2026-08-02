@@ -1,2 +1,27 @@
-export { fetchServerStats, fetchPipelines, fetchSessions, fetchSession, createSession, updateSession, deleteSession } from "./client.ts";
-export type { MetadataEnvelope, MetadataKind, OutputStreamInfo, PipelineInfo, ProsodyFrame, ServerStats, Session, SessionCreate, SessionStats, SessionStatus, SessionUpdate, SynthesisInstructions } from "./types.gen.ts";
+export {
+  fetchServerStats,
+  fetchPipelines,
+  fetchStages,
+  fetchSessions,
+  fetchSession,
+  createSession,
+  updateSession,
+  deleteSession,
+} from "./client.ts";
+export type {
+  MetadataEnvelope,
+  MetadataKind,
+  OutputStreamInfo,
+  PipelineInfo,
+  ProsodyFrame,
+  ServerStats,
+  Session,
+  SessionCreate,
+  SessionStats,
+  SessionStatus,
+  SessionUpdate,
+  StageInfo,
+  StageKind,
+  StageSelection,
+  SynthesisInstructions,
+} from "./types.gen.ts";
