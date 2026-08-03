@@ -91,7 +91,7 @@ class PassthroughListenStage:
             kind=StageKind.LISTEN,
             name="Passthrough Listen",
             description="Emits placeholder transcript markers for non-silent audio.",
-            default_for_kind=True,
+            default_for_kind=False,
         )
 
     async def start(self) -> None: ...
@@ -141,7 +141,7 @@ class PassthroughTranslateStage:
             kind=StageKind.TRANSLATE,
             name="Passthrough Translate",
             description="Identity translation stub for composition tests.",
-            default_for_kind=True,
+            default_for_kind=False,
         )
 
     async def start(self) -> None: ...
@@ -183,7 +183,7 @@ class PassthroughSpeakStage:
             kind=StageKind.SPEAK,
             name="Passthrough Speak",
             description="Emits short silence for each text chunk.",
-            default_for_kind=True,
+            default_for_kind=False,
         )
 
     async def start(self) -> None: ...
@@ -236,7 +236,7 @@ def register_stub_stages(registry: StageRegistryLike) -> None:
                 kind=StageKind.LISTEN,
                 name="Passthrough Listen",
                 description="Emits placeholder transcript markers for non-silent audio.",
-                default_for_kind=True,
+                default_for_kind=False,
             ),
             PassthroughListenStage,
         )
@@ -248,7 +248,7 @@ def register_stub_stages(registry: StageRegistryLike) -> None:
                 kind=StageKind.TRANSLATE,
                 name="Passthrough Translate",
                 description="Identity translation stub for composition tests.",
-                default_for_kind=True,
+                default_for_kind=False,
             ),
             PassthroughTranslateStage,
         )
@@ -260,7 +260,7 @@ def register_stub_stages(registry: StageRegistryLike) -> None:
                 kind=StageKind.SPEAK,
                 name="Passthrough Speak",
                 description="Emits short silence for each text chunk.",
-                default_for_kind=True,
+                default_for_kind=False,
             ),
             PassthroughSpeakStage,
         )

@@ -18,7 +18,9 @@ class TestStageRegistry:
         listen_stages = registry.list_all(StageKind.LISTEN)
         assert listen_stages
         assert all(s.kind == StageKind.LISTEN for s in listen_stages)
-        assert {s.id for s in listen_stages} == {"passthrough-listen"}
+        ids = {s.id for s in listen_stages}
+        assert "passthrough-listen" in ids
+        assert "whisper-listen" in ids
 
     def test_missing_stage(self) -> None:
         registry = StageRegistry()

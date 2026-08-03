@@ -36,8 +36,16 @@ class StageRegistry:
 
 
 def create_default_stage_registry() -> StageRegistry:
+    from src.pipelines.stages_listen import register_listen_stages
+    from src.pipelines.stages_prosody import register_prosody_stages
+    from src.pipelines.stages_speak import register_speak_stages
+    from src.pipelines.stages_translate import register_translate_stages
     from src.pipelines.stub_stages import register_stub_stages
 
     registry = StageRegistry()
     register_stub_stages(registry)
+    register_listen_stages(registry)
+    register_translate_stages(registry)
+    register_speak_stages(registry)
+    register_prosody_stages(registry)
     return registry

@@ -2473,6 +2473,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pyworld"
+version = "0.3.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a5/0f/c78d631ffbb4c1aaebf80ff2bf9e791213b381dbe404f9ce1a3eb3672931/pyworld-0.3.5.tar.gz", hash = "sha256:1b93e53cddb67a0e4faa34d6cf919ac6c662feb1c8c0ed901d71b595ab396aa3", size = 261021, upload-time = "2025-01-20T16:07:51.261Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/29/9c9c0dad7575faea3dbc3cbc8b69e0365b35912332068afd79a2b93d822d/pyworld-0.3.5-cp312-cp312-win_amd64.whl", hash = "sha256:59b48961c2ac34fb01efeb1a77d3eda69c41b676858cbc3a82dfb7602c0c762b", size = 222700, upload-time = "2025-01-21T15:58:47.959Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/5c/7e8fb5417ef96cbeca125b5ee507ec5568ce4bde7b576d20db2d2d4a80fc/pyworld-0.3.5-cp313-cp313-win_amd64.whl", hash = "sha256:860c5c3528f1dbc5c68fa71a16e3bb6990244619e5b9baf62952f3a6bfc6131c", size = 222371, upload-time = "2025-01-21T15:59:08.319Z" },
+]
+
+[[package]]
 name = "pyyaml"
 version = "6.0.3"
 source = { registry = "https://pypi.org/simple" }
@@ -2896,7 +2909,14 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+prosody-pyworld = [
+    { name = "pyworld" },
+]
 seamless = [
+    { name = "seamless-communication" },
+]
+stages-all = [
+    { name = "pyworld" },
     { name = "seamless-communication" },
 ]
 
@@ -2916,14 +2936,16 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "faster-whisper", specifier = ">=1.1.0" },
     { name = "numpy", specifier = ">=1.23" },
+    { name = "pyworld", marker = "extra == 'prosody-pyworld'", specifier = ">=0.3.4" },
     { name = "seamless-communication", marker = "extra == 'seamless'", git = "https://github.com/aleksclark/seamless_communication.git?branch=main" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
+    { name = "sermon-translate-server", extras = ["seamless", "prosody-pyworld"], marker = "extra == 'stages-all'" },
     { name = "torch", specifier = ">=2.0" },
     { name = "torchaudio", specifier = ">=2.0" },
     { name = "transformers", specifier = ">=4.44,<5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.41.0" },
 ]
-provides-extras = ["seamless"]
+provides-extras = ["seamless", "listen-kyutai", "tts-qwen", "tts-pocket", "prosody-pyworld", "translate-llm", "stages-all"]
 
 [package.metadata.requires-dev]
 dev = [

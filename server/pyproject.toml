@@ -21,6 +21,16 @@ dependencies = [
 seamless = [
     "seamless-communication",
 ]
+listen-kyutai = []
+tts-qwen = []
+tts-pocket = []
+prosody-pyworld = [
+    "pyworld>=0.3.4",
+]
+translate-llm = []
+stages-all = [
+    "sermon-translate-server[seamless,prosody-pyworld]",
+]
 
 [project.scripts]
 serve = "uvicorn src.main:app --reload --host 0.0.0.0 --port 8000"

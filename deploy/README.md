@@ -374,6 +374,33 @@ export STAGE_REMOTE_URLS='{
 
 Optional: `STAGE_WORKER_PYTHON`, `STAGE_WORKER_START_TIMEOUT` (seconds).
 
+## Concrete stage backends (Phase 7)
+
+Registered when available (see `GET /api/stages`):
+
+| Kind | Stage id | Notes |
+|------|----------|-------|
+| Listen | `whisper-listen` (default) | faster-whisper; weights under `MODEL_CACHE_DIR` |
+| Listen | `kyutai-stt-1b` | optional extra scaffold |
+| Translate | `opus-mt-en-es` (default) | Helsinki-NLP Opus-MT; `TRANSLATE_MODEL_ID` override |
+| Speak | `edge-tts-es` (default) | edge-tts Spanish neural |
+| Speak | `qwen3-tts-0.6b` | set `QWEN3_TTS_WS_URL` to vLLM-Omni WS |
+| Speak | `pocket-tts-spanish-24l` | optional CPU fallback when `pocket-tts` installed |
+| Prosody | `baseline-prosody` (default) | YIN + energy |
+| Prosody | `pyworld-prosody` | optional `prosody-pyworld` extra |
+
+GPU host runbook (composed session):
+
+```sh
+export MODEL_CACHE_DIR=/models/sermon-translate/models
+export COMPUTE_DEVICE=cuda
+export STAGE_RUNTIME=local   # or remote with stage jobs
+uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
+# Create session with pipeline_id=composed and stages defaults from UI
+```
+
+CI stays lean: optional extras are not required for unit tests (backends mocked).
+
 ## VRAM budgeting (16 GB per GPU)
 
 Each V100 has **16 GB**. Rough guidance for a single GPU:
