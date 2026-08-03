@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.models import Session, StageInfo, StageKind
-from src.pipelines.stage_registry import StageRegistry
 from src.runtime.model_cache import ModelCache
+
+if TYPE_CHECKING:
+    from src.pipelines.stage_registry import StageRegistry
 
 
 class LocalStageHandle:

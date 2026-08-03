@@ -324,6 +324,40 @@ Override the in-container path with `-var 'model_cache_dir=...'` if operators
 prefer a different MooseFS subdir. There is no app-level cross-node sync —
 MooseFS is the shared filesystem.
 
+## Stage workers (local / remote)
+
+Composable stages can run out-of-process behind `STAGE_RUNTIME`:
+
+| Value | Behavior |
+|-------|----------|
+| `local` (default) | In-process stages |
+| `subprocess` | Spawns `python -m src.runtime.worker` per stage |
+| `remote` | Connects to `STAGE_REMOTE_URLS` WebSocket endpoints |
+
+Run a worker manually:
+
+```sh
+cd server
+MODEL_CACHE_DIR=/path/to/cache \
+  uv run python -m src.runtime.worker --stage-id passthrough-listen --host 0.0.0.0 --port 8101
+```
+
+Health: `GET /healthz`. Protocol socket: `ws://host:port/ws`.
+
+Point the orchestrator at remote workers:
+
+```sh
+export STAGE_RUNTIME=remote
+export STAGE_REMOTE_URLS='{
+  "passthrough-listen":"ws://127.0.0.1:8101/ws",
+  "passthrough-translate":"ws://127.0.0.1:8102/ws",
+  "passthrough-speak":"ws://127.0.0.1:8103/ws",
+  "baseline-prosody":"ws://127.0.0.1:8104/ws"
+}'
+```
+
+Optional: `STAGE_WORKER_PYTHON`, `STAGE_WORKER_START_TIMEOUT` (seconds).
+
 ## VRAM budgeting (16 GB per GPU)
 
 Each V100 has **16 GB**. Rough guidance for a single GPU:

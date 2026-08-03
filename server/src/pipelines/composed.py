@@ -19,7 +19,6 @@ from src.pipelines.prosody_tokens import ProsodyAligner
 from src.pipelines.stage_registry import StageRegistry, create_default_stage_registry
 from src.pipelines.stages import ASRStage, ProsodyStage, TranslationStage, TTSStage
 from src.runtime.base import StageRuntime
-from src.runtime.local import LocalStageRuntime
 from src.runtime.model_cache import ModelCache
 
 LISTEN_STREAM = "listen"
@@ -88,6 +87,8 @@ class ComposedPipeline(BasePipeline):
         cache: ModelCache | None = None,
     ) -> None:
         super().__init__()
+        from src.runtime.local import LocalStageRuntime
+
         self._stage_registry = stage_registry or create_default_stage_registry()
         self._cache = cache or ModelCache(default_model_cache_dir())
         self._runtime = runtime or LocalStageRuntime(self._stage_registry, self._cache)

@@ -13,6 +13,8 @@ from src.models import ServerStatsTracker
 from src.pipelines import create_default_registry, create_default_stage_registry
 from src.runtime.local import LocalStageRuntime
 from src.runtime.model_cache import ModelCache
+from src.runtime.remote_runtime import RemoteStageRuntime
+from src.runtime.subprocess_runtime import SubprocessStageRuntime
 from src.transport.crosstalk_service import CrosstalkService
 
 LOG_FILE = Path(__file__).resolve().parent.parent.parent / "server.log"
@@ -61,7 +63,24 @@ def create_app() -> FastAPI:
 
     store = SessionStore()
     stage_registry = create_default_stage_registry()
-    runtime = LocalStageRuntime(stage_registry, cache)
+    if settings.stage_runtime == "subprocess":
+        runtime = SubprocessStageRuntime(
+            stage_registry,
+            cache,
+            python=settings.stage_worker_python or None,
+            start_timeout=settings.stage_worker_start_timeout,
+        )
+        logger.info("stage runtime: subprocess")
+    elif settings.stage_runtime == "remote":
+        runtime = RemoteStageRuntime(
+            stage_registry,
+            settings.stage_remote_urls,
+            start_timeout=settings.stage_worker_start_timeout,
+        )
+        logger.info("stage runtime: remote (%d urls)", len(settings.stage_remote_urls))
+    else:
+        runtime = LocalStageRuntime(stage_registry, cache)
+        logger.info("stage runtime: local")
     registry = create_default_registry(
         stage_registry=stage_registry,
         cache=cache,

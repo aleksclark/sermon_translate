@@ -39,6 +39,9 @@ class Settings:
 
     model_cache_dir: Path = field(default_factory=default_model_cache_dir)
     stage_runtime: str = "local"
+    stage_worker_python: str = ""
+    stage_remote_urls: dict[str, str] = field(default_factory=dict)
+    stage_worker_start_timeout: float = 60.0
 
     def resolved_compute_type(self) -> str:
         if self.compute_type:
@@ -78,6 +81,8 @@ def _float_env(name: str, default: float) -> float:
 
 
 def load_settings() -> Settings:
+    from src.runtime.protocol import parse_remote_urls
+
     stun = os.environ.get("ICE_STUN_URLS", "stun:stun.l.google.com:19302")
     cache_raw = os.environ.get("MODEL_CACHE_DIR", "").strip()
     model_cache_dir = (
@@ -86,6 +91,10 @@ def load_settings() -> Settings:
     stage_runtime = os.environ.get("STAGE_RUNTIME", "local").strip() or "local"
     if stage_runtime not in {"local", "subprocess", "remote"}:
         stage_runtime = "local"
+    try:
+        remote_urls = parse_remote_urls(os.environ.get("STAGE_REMOTE_URLS", ""))
+    except ValueError:
+        remote_urls = {}
     return Settings(
         ice_stun_urls=_split_csv(stun),
         turn_urls=_split_csv(os.environ.get("TURN_URLS", "")),
@@ -100,6 +109,9 @@ def load_settings() -> Settings:
         compute_type=os.environ.get("COMPUTE_TYPE", "").strip(),
         model_cache_dir=model_cache_dir,
         stage_runtime=stage_runtime,
+        stage_worker_python=os.environ.get("STAGE_WORKER_PYTHON", "").strip(),
+        stage_remote_urls=remote_urls,
+        stage_worker_start_timeout=_float_env("STAGE_WORKER_START_TIMEOUT", 60.0),
     )
 
 
