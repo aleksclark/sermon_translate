@@ -38,13 +38,29 @@ deploy/
   README.md                              this file
   scripts/
     preflight-gpu.sh                     read-only prerequisite/capacity check
+    resolve-stage-services.sh            read-only STAGE_REMOTE_URLS sketch
   nomad/
-    sermon-translate-gpu.nomad.hcl       GPU inference service (1 or 2 GPUs)
+    sermon-translate-gpu.nomad.hcl       LEGACY monolithic GPU inference service
+    sermon-translate-orchestrator.nomad.hcl  API/WebRTC orchestrator (remote stages)
+    sermon-translate-stage-listen.nomad.hcl
+    sermon-translate-stage-translate.nomad.hcl
+    sermon-translate-stage-speak.nomad.hcl   (gpu_mode=cpu for Pocket TTS fallback)
+    sermon-translate-stage-prosody.nomad.hcl
     sermon-translate-train.nomad.hcl     GPU training/fine-tune BATCH template
 server/
   Dockerfile.gpu                         CUDA/cuDNN server image (torch, faster-whisper, seamless)
   Dockerfile                             existing CPU image (unchanged)
 ```
+
+### Staged deploy (preferred going forward)
+
+1. Submit stage workers (listen / translate / speak / optional prosody).
+2. Resolve endpoints: `bash deploy/scripts/resolve-stage-services.sh`
+3. Submit orchestrator with `STAGE_RUNTIME=remote` and `stage_remote_urls=...`.
+
+The monolithic `sermon-translate-gpu.nomad.hcl` remains for back-compat until
+stage workers are the production default. Prefer the staged jobs when placing
+ASR and TTS on different GPUs or when using a CPU speak fallback.
 
 ## Step 1: run the preflight check (required)
 
