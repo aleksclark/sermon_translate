@@ -116,7 +116,16 @@ class BasePipeline(abc.ABC):
         return queue
 
     async def _publish_text(self, name: str, text: str, session: Session | None) -> None:
-        await self._text_queue(name, session).put(text)
+        queue = self._text_queue(name, session)
+        while True:
+            try:
+                queue.put_nowait(text)
+                return
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    await asyncio.sleep(0)
 
     async def _finish_text(self, name: str, session: Session | None) -> None:
         await self._text_queue(name, session).put(None)

@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 HF_REPO_DEFAULT = "kyutai/stt-1b-en_fr"
 MIMI_SAMPLE_RATE = 24000
+# Emit a partial product at least this often while tokens accumulate.
+EMIT_EVERY_FRAMES = 5
 
 
 class KyutaiListenStage:
@@ -94,6 +96,25 @@ class KyutaiListenStage:
         self._tokenizer = None
         self._torch = None
 
+    def _product(
+        self, *, sequence: int, text: str, is_final: bool, start_ms: float, end_ms: float
+    ) -> ListenProduct:
+        words = [
+            WordSpan(text=word, start_ms=None, end_ms=None, conf=1.0)
+            for word in text.split()
+            if word
+        ]
+        if not words and text:
+            words = [WordSpan(text=text, start_ms=start_ms, end_ms=end_ms, conf=1.0)]
+        return ListenProduct(
+            sequence=sequence,
+            utterance_id=f"kyutai-{sequence}",
+            text=text,
+            is_final=is_final,
+            words=words,
+            language="en",
+        )
+
     async def transcribe(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[ListenProduct]:
         if self._lm_gen is None:
             await self.start()
@@ -105,98 +126,120 @@ class KyutaiListenStage:
         torch = self._torch
         frame_size = int(self._mimi.frame_size)
         mimi_rate = int(getattr(self._mimi, "sample_rate", MIMI_SAMPLE_RATE))
+        frame_ms = frame_size / mimi_rate * 1000.0
         buffer = np.zeros(0, dtype=np.float32)
         sequence = 0
         text_parts: list[str] = []
+        last_emitted = ""
+        frames_since_emit = 0
         emitted_ms = 0.0
-        frames_seen = 0
+        utterance_start_ms = 0.0
 
         silence = torch.zeros((1, 1, frame_size), dtype=torch.float32, device=self._device)
         n_prefix = max(0, int(round(self._prefix_seconds * mimi_rate / frame_size)))
+        n_suffix = max(1, int(round(self._delay_seconds * mimi_rate / frame_size)))
 
         def _step(chunk: Any) -> str | None:
             audio_tokens = self._mimi.encode(chunk)
             text_tokens = self._lm_gen.step(audio_tokens)
-            token = int(text_tokens[0, 0, 0].detach().cpu().item())
+            # LMGen may return [B, 1, 1] or similar; take first scalar token.
+            token_tensor = text_tokens.reshape(-1)[0]
+            token = int(token_tensor.detach().cpu().item())
             if token in (0, self._padding_token_id):
                 return None
             piece = self._tokenizer.id_to_piece(token)
-            return str(piece).replace("▁", " ")
+            text = str(piece).replace("▁", " ")
+            return text if text else None
+
+        def _should_emit(piece: str | None, force: bool = False) -> bool:
+            nonlocal frames_since_emit
+            if force:
+                return True
+            if piece is None:
+                return False
+            # Word boundary or enough frames of new content.
+            if piece.startswith(" ") or piece.endswith(" ") or " " in piece.strip():
+                return True
+            return frames_since_emit >= EMIT_EVERY_FRAMES
 
         loop = asyncio.get_running_loop()
         with self._mimi.streaming(1), self._lm_gen.streaming(1):
             for _ in range(n_prefix):
-                piece = await loop.run_in_executor(None, _step, silence)
-                frames_seen += 1
-                if piece:
-                    text_parts.append(piece)
+                await loop.run_in_executor(None, _step, silence)
 
             async for raw in audio_stream:
                 if not raw:
                     continue
                 pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+                if pcm.size == 0:
+                    continue
+                # Average multi-channel down to mono if needed.
+                if pcm.size % 1 == 0 and self._sample_rate > 0:
+                    pass
                 if self._sample_rate != mimi_rate:
                     pcm = downsample(pcm, self._sample_rate, mimi_rate)
-                buffer = np.concatenate([buffer, pcm])
+                buffer = np.concatenate([buffer, pcm.astype(np.float32, copy=False)])
+
                 while buffer.size >= frame_size:
                     frame = buffer[:frame_size]
                     buffer = buffer[frame_size:]
-                    tensor = torch.from_numpy(frame.copy()).to(self._device).view(1, 1, -1)
+                    tensor = (
+                        torch.from_numpy(np.ascontiguousarray(frame))
+                        .to(self._device)
+                        .view(1, 1, -1)
+                    )
                     piece = await loop.run_in_executor(None, _step, tensor)
-                    frames_seen += 1
-                    frame_ms = frame_size / mimi_rate * 1000.0
                     emitted_ms += frame_ms
+                    frames_since_emit += 1
                     if piece:
+                        if not text_parts:
+                            utterance_start_ms = max(0.0, emitted_ms - frame_ms)
                         text_parts.append(piece)
-                        text = "".join(text_parts).strip()
-                        if text and (piece.endswith(" ") or piece.startswith(" ")):
-                            words = [
-                                WordSpan(text=w, start_ms=None, end_ms=None, conf=1.0)
-                                for w in text.split()
-                                if w
-                            ]
-                            yield ListenProduct(
-                                sequence=sequence,
-                                utterance_id=f"kyutai-{sequence}",
-                                text=text,
-                                is_final=False,
-                                words=words,
-                                language="en",
-                            )
-                            sequence += 1
 
-            # flush remaining audio padded to a full frame
+                    text = "".join(text_parts).strip()
+                    if text and text != last_emitted and _should_emit(piece):
+                        yield self._product(
+                            sequence=sequence,
+                            text=text,
+                            is_final=False,
+                            start_ms=utterance_start_ms,
+                            end_ms=emitted_ms,
+                        )
+                        last_emitted = text
+                        sequence += 1
+                        frames_since_emit = 0
+
             if buffer.size > 0:
                 pad = frame_size - (buffer.size % frame_size)
                 if pad != frame_size:
                     buffer = np.concatenate([buffer, np.zeros(pad, dtype=np.float32)])
                 for i in range(0, buffer.size, frame_size):
                     frame = buffer[i : i + frame_size]
-                    tensor = torch.from_numpy(frame.copy()).to(self._device).view(1, 1, -1)
+                    tensor = (
+                        torch.from_numpy(np.ascontiguousarray(frame))
+                        .to(self._device)
+                        .view(1, 1, -1)
+                    )
                     piece = await loop.run_in_executor(None, _step, tensor)
+                    emitted_ms += frame_ms
                     if piece:
                         text_parts.append(piece)
 
-            n_suffix = max(0, int(round(self._delay_seconds * mimi_rate / frame_size)))
+            # Audio delay: tokens lag real speech; flush with silence after input.
             for _ in range(n_suffix):
                 piece = await loop.run_in_executor(None, _step, silence)
+                emitted_ms += frame_ms
                 if piece:
                     text_parts.append(piece)
 
         text = "".join(text_parts).strip()
-        if text:
-            words = [
-                WordSpan(text=w, start_ms=None, end_ms=None, conf=1.0)
-                for w in text.split()
-                if w
-            ]
-            yield ListenProduct(
+        if text and text != last_emitted or text:
+            yield self._product(
                 sequence=sequence,
-                utterance_id=f"kyutai-{sequence}",
                 text=text,
                 is_final=True,
-                words=words,
-                language="en",
+                start_ms=utterance_start_ms,
+                end_ms=emitted_ms,
             )
 
 

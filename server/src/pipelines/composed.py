@@ -169,11 +169,15 @@ class ComposedPipeline(BasePipeline):
             assert isinstance(created, ProsodyStage)
             prosody = created
 
-        await listen_handle.start()
-        await translate_handle.start()
-        await speak_handle.start()
+        # Start listen/translate/prosody first so ASR can run while speak loads.
+        start_tasks = [
+            asyncio.create_task(listen_handle.start()),
+            asyncio.create_task(translate_handle.start()),
+        ]
         if prosody_handle is not None:
-            await prosody_handle.start()
+            start_tasks.append(asyncio.create_task(prosody_handle.start()))
+        await asyncio.gather(*start_tasks)
+        speak_start_task = asyncio.create_task(speak_handle.start())
 
         listen_audio: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=QUEUE_CAPACITY)
         outputs = [listen_audio]
@@ -229,9 +233,13 @@ class ComposedPipeline(BasePipeline):
         )
 
         try:
+            await speak_start_task
             async for chunk in speak.synthesize(_queue_translate(target_products)):
                 yield chunk
         finally:
+            if not speak_start_task.done():
+                speak_start_task.cancel()
+                await asyncio.gather(speak_start_task, return_exceptions=True)
             for task in (listen_task, translate_task, tee_task, prosody_task):
                 if task is not None and not task.done():
                     task.cancel()
