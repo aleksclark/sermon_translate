@@ -59,6 +59,12 @@ class SubprocessStageRuntime:
         env = os.environ.copy()
         env.update(self._cache.environ())
         env.setdefault("STAGE_RUNTIME", "local")
+        try:
+            from src.runtime.nvidia_libs import ensure_nvidia_library_path
+
+            env["LD_LIBRARY_PATH"] = ensure_nvidia_library_path()
+        except Exception:
+            pass
         port = _free_port()
 
         process = await asyncio.create_subprocess_exec(

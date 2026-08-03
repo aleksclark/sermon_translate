@@ -13,6 +13,7 @@ from src.models import ServerStatsTracker
 from src.pipelines import create_default_registry, create_default_stage_registry
 from src.runtime.local import LocalStageRuntime
 from src.runtime.model_cache import ModelCache
+from src.runtime.nvidia_libs import ensure_nvidia_library_path
 from src.runtime.remote_runtime import RemoteStageRuntime
 from src.runtime.subprocess_runtime import SubprocessStageRuntime
 from src.transport.crosstalk_service import CrosstalkService
@@ -42,6 +43,7 @@ def _configure_logging() -> None:
 
 
 def create_app() -> FastAPI:
+    ensure_nvidia_library_path()
     _configure_logging()
     app = FastAPI(title="Sermon Translate", version="0.1.0")
 

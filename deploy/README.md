@@ -381,11 +381,11 @@ Registered when available (see `GET /api/stages`):
 | Kind | Stage id | Notes |
 |------|----------|-------|
 | Listen | `whisper-listen` (default) | faster-whisper; weights under `MODEL_CACHE_DIR` |
-| Listen | `kyutai-stt-1b` | optional extra scaffold |
+| Listen | `kyutai-stt-1b` | `uv sync --extra listen-kyutai` (`moshi`); HF `kyutai/stt-1b-en_fr` |
 | Translate | `opus-mt-en-es` (default) | Helsinki-NLP Opus-MT; `TRANSLATE_MODEL_ID` override |
 | Speak | `edge-tts-es` (default) | edge-tts Spanish neural |
 | Speak | `qwen3-tts-0.6b` | set `QWEN3_TTS_WS_URL` to vLLM-Omni WS |
-| Speak | `pocket-tts-spanish-24l` | optional CPU fallback when `pocket-tts` installed |
+| Speak | `pocket-tts-spanish-24l` | `uv sync --extra tts-pocket`; language `spanish_24l`, voice `lola` |
 | Prosody | `baseline-prosody` (default) | YIN + energy |
 | Prosody | `pyworld-prosody` | optional `prosody-pyworld` extra |
 

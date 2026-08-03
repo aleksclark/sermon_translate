@@ -21,15 +21,21 @@ dependencies = [
 seamless = [
     "seamless-communication",
 ]
-listen-kyutai = []
+listen-kyutai = [
+    "moshi>=0.2.6",
+    "julius>=0.2.7",
+    "sphn>=0.1.4",
+]
 tts-qwen = []
-tts-pocket = []
+tts-pocket = [
+    "pocket-tts>=0.1.0",
+]
 prosody-pyworld = [
     "pyworld>=0.3.4",
 ]
 translate-llm = []
 stages-all = [
-    "sermon-translate-server[seamless,prosody-pyworld]",
+    "sermon-translate-server[seamless,prosody-pyworld,listen-kyutai,tts-pocket]",
 ]
 
 [project.scripts]

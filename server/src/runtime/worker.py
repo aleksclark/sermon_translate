@@ -16,6 +16,7 @@ from src.models import ListenProduct, StageKind, TranslateProduct
 from src.pipelines.stage_registry import create_default_stage_registry
 from src.pipelines.stages import ASRStage, ProsodyStage, TranslationStage, TTSStage
 from src.runtime.model_cache import ModelCache
+from src.runtime.nvidia_libs import ensure_nvidia_library_path
 from src.runtime.protocol import (
     WorkerMessage,
     WorkerMessageType,
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def create_worker_app(stage_id: str) -> FastAPI:
+    ensure_nvidia_library_path()
     settings = get_settings()
     cache = ModelCache(settings.model_cache_dir)
     try:
@@ -203,6 +205,7 @@ async def _serve_session(ws: WebSocket, factory: Any, cache: ModelCache) -> None
 
 
 def main(argv: list[str] | None = None) -> None:
+    ensure_nvidia_library_path()
     parser = argparse.ArgumentParser(description="Sermon translate stage worker")
     parser.add_argument("--stage-id", required=True)
     parser.add_argument("--host", default="127.0.0.1")

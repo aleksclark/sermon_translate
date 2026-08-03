@@ -13,6 +13,9 @@ def register_speak_stages(registry: StageRegistry) -> None:
     registry.register(EdgeTTSSpeakFactory())
     registry.register(Qwen3TTSFactory())
     try:
+        from src.runtime.nvidia_libs import ensure_nvidia_library_path
+
+        ensure_nvidia_library_path()
         import pocket_tts  # type: ignore[import-not-found]  # noqa: F401
 
         from src.pipelines.stages_speak.pocket_tts import PocketTTSFactory

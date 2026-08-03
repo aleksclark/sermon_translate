@@ -1,41 +1,203 @@
-"""Optional Kyutai STT-1B listen backend.
-
-Importing this module succeeds only when the kyutai extra is installed.
-The factory is registered by stages_listen.register_listen_stages.
-"""
+"""Kyutai STT-1B listen backend via the moshi package."""
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import os
 from collections.abc import AsyncIterator
 from typing import Any
 
-from src.models import ListenProduct, StageInfo, StageKind
+import numpy as np
+
+from src.models import ListenProduct, StageInfo, StageKind, WordSpan
+from src.pipelines._audio import downsample
+from src.runtime.nvidia_libs import ensure_nvidia_library_path
+
+logger = logging.getLogger(__name__)
+
+HF_REPO_DEFAULT = "kyutai/stt-1b-en_fr"
+MIMI_SAMPLE_RATE = 24000
 
 
 class KyutaiListenStage:
-    def __init__(self, *, sample_rate: int = 48000, cache: Any = None, **_: object) -> None:
-        import kyutai  # type: ignore[import-not-found]  # noqa: F401
+    def __init__(
+        self,
+        *,
+        sample_rate: int = 48000,
+        cache: Any = None,
+        hf_repo: str | None = None,
+        device: str | None = None,
+        **_: object,
+    ) -> None:
+        ensure_nvidia_library_path()
+        import moshi  # type: ignore[import-not-found]  # noqa: F401
 
         self._sample_rate = sample_rate
         self._cache = cache
+        self._hf_repo = hf_repo or os.environ.get("KYUTAI_STT_HF_REPO", HF_REPO_DEFAULT)
+        self._device_override = device or os.environ.get("KYUTAI_STT_DEVICE", "").strip()
+        self._mimi: Any = None
+        self._lm_gen: Any = None
+        self._tokenizer: Any = None
+        self._torch: Any = None
+        self._device = "cpu"
+        self._prefix_seconds = 1.0
+        self._delay_seconds = 0.5
+        self._padding_token_id = 3
         self.info = StageInfo(
             id="kyutai-stt-1b",
             kind=StageKind.LISTEN,
             name="Kyutai STT-1B",
-            description="Kyutai STT-1B true streaming ASR (optional extra).",
+            description="Kyutai STT-1B streaming ASR via moshi (GPU recommended).",
             requires_gpu=True,
             default_for_kind=False,
         )
 
     async def start(self) -> None:
-        raise RuntimeError("Kyutai STT backend wiring is pending package API integration")
+        if self._lm_gen is not None:
+            return
+        if self._cache is not None:
+            os.environ.setdefault("HF_HOME", str(self._cache.path_for("huggingface")))
+            os.environ.setdefault("TORCH_HOME", str(self._cache.path_for("torch")))
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._load_models)
+        logger.info("kyutai-stt-1b loaded repo=%s device=%s", self._hf_repo, self._device)
 
-    async def stop(self) -> None: ...
+    def _load_models(self) -> None:
+        ensure_nvidia_library_path()
+        import torch
+        from moshi.models.lm import LMGen
+        from moshi.models.loaders import CheckpointInfo
+
+        self._torch = torch
+        if self._device_override:
+            self._device = self._device_override
+        else:
+            self._device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        info = CheckpointInfo.from_hf_repo(self._hf_repo)
+        self._mimi = info.get_mimi(device=self._device)
+        self._tokenizer = info.get_text_tokenizer()
+        dtype = torch.bfloat16 if self._device.startswith("cuda") else torch.float32
+        lm = info.get_moshi(device=self._device, dtype=dtype)
+        self._lm_gen = LMGen(lm, temp=0, temp_text=0.0)
+        stt_config = info.stt_config or {}
+        raw_config = info.raw_config or {}
+        self._prefix_seconds = float(stt_config.get("audio_silence_prefix_seconds", 1.0))
+        self._delay_seconds = float(stt_config.get("audio_delay_seconds", 0.5))
+        self._padding_token_id = int(raw_config.get("text_padding_token_id", 3))
+
+    async def stop(self) -> None:
+        self._mimi = None
+        self._lm_gen = None
+        self._tokenizer = None
+        self._torch = None
 
     async def transcribe(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[ListenProduct]:
-        if False:
-            yield ListenProduct(sequence=0, utterance_id="x", text="")
-        raise RuntimeError("Kyutai STT backend wiring is pending package API integration")
+        if self._lm_gen is None:
+            await self.start()
+        assert self._mimi is not None
+        assert self._lm_gen is not None
+        assert self._tokenizer is not None
+        assert self._torch is not None
+
+        torch = self._torch
+        frame_size = int(self._mimi.frame_size)
+        mimi_rate = int(getattr(self._mimi, "sample_rate", MIMI_SAMPLE_RATE))
+        buffer = np.zeros(0, dtype=np.float32)
+        sequence = 0
+        text_parts: list[str] = []
+        emitted_ms = 0.0
+        frames_seen = 0
+
+        silence = torch.zeros((1, 1, frame_size), dtype=torch.float32, device=self._device)
+        n_prefix = max(0, int(round(self._prefix_seconds * mimi_rate / frame_size)))
+
+        def _step(chunk: Any) -> str | None:
+            audio_tokens = self._mimi.encode(chunk)
+            text_tokens = self._lm_gen.step(audio_tokens)
+            token = int(text_tokens[0, 0, 0].detach().cpu().item())
+            if token in (0, self._padding_token_id):
+                return None
+            piece = self._tokenizer.id_to_piece(token)
+            return str(piece).replace("▁", " ")
+
+        loop = asyncio.get_running_loop()
+        with self._mimi.streaming(1), self._lm_gen.streaming(1):
+            for _ in range(n_prefix):
+                piece = await loop.run_in_executor(None, _step, silence)
+                frames_seen += 1
+                if piece:
+                    text_parts.append(piece)
+
+            async for raw in audio_stream:
+                if not raw:
+                    continue
+                pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+                if self._sample_rate != mimi_rate:
+                    pcm = downsample(pcm, self._sample_rate, mimi_rate)
+                buffer = np.concatenate([buffer, pcm])
+                while buffer.size >= frame_size:
+                    frame = buffer[:frame_size]
+                    buffer = buffer[frame_size:]
+                    tensor = torch.from_numpy(frame.copy()).to(self._device).view(1, 1, -1)
+                    piece = await loop.run_in_executor(None, _step, tensor)
+                    frames_seen += 1
+                    frame_ms = frame_size / mimi_rate * 1000.0
+                    emitted_ms += frame_ms
+                    if piece:
+                        text_parts.append(piece)
+                        text = "".join(text_parts).strip()
+                        if text and (piece.endswith(" ") or piece.startswith(" ")):
+                            words = [
+                                WordSpan(text=w, start_ms=None, end_ms=None, conf=1.0)
+                                for w in text.split()
+                                if w
+                            ]
+                            yield ListenProduct(
+                                sequence=sequence,
+                                utterance_id=f"kyutai-{sequence}",
+                                text=text,
+                                is_final=False,
+                                words=words,
+                                language="en",
+                            )
+                            sequence += 1
+
+            # flush remaining audio padded to a full frame
+            if buffer.size > 0:
+                pad = frame_size - (buffer.size % frame_size)
+                if pad != frame_size:
+                    buffer = np.concatenate([buffer, np.zeros(pad, dtype=np.float32)])
+                for i in range(0, buffer.size, frame_size):
+                    frame = buffer[i : i + frame_size]
+                    tensor = torch.from_numpy(frame.copy()).to(self._device).view(1, 1, -1)
+                    piece = await loop.run_in_executor(None, _step, tensor)
+                    if piece:
+                        text_parts.append(piece)
+
+            n_suffix = max(0, int(round(self._delay_seconds * mimi_rate / frame_size)))
+            for _ in range(n_suffix):
+                piece = await loop.run_in_executor(None, _step, silence)
+                if piece:
+                    text_parts.append(piece)
+
+        text = "".join(text_parts).strip()
+        if text:
+            words = [
+                WordSpan(text=w, start_ms=None, end_ms=None, conf=1.0)
+                for w in text.split()
+                if w
+            ]
+            yield ListenProduct(
+                sequence=sequence,
+                utterance_id=f"kyutai-{sequence}",
+                text=text,
+                is_final=True,
+                words=words,
+                language="en",
+            )
 
 
 class KyutaiListenFactory:
@@ -45,7 +207,7 @@ class KyutaiListenFactory:
             id="kyutai-stt-1b",
             kind=StageKind.LISTEN,
             name="Kyutai STT-1B",
-            description="Kyutai STT-1B true streaming ASR (optional extra).",
+            description="Kyutai STT-1B streaming ASR via moshi (GPU recommended).",
             requires_gpu=True,
             default_for_kind=False,
         )
