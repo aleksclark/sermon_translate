@@ -129,3 +129,51 @@ export interface MetadataEnvelope {
   instructions: SynthesisInstructions | null;
   payload: Record<string, unknown>;
 }
+
+export interface ProsodyToken {
+  pitch_median: number;
+  pitch_range: number;
+  pitch_slope: number;
+  duration: number;
+  energy: number;
+  f0_hz: number | null;
+  energy_rms: number | null;
+  start_ms: number | null;
+  end_ms: number | null;
+}
+
+export interface WordSpan {
+  text: string;
+  start_ms: number | null;
+  end_ms: number | null;
+  conf: number | null;
+  prosody: ProsodyToken | null;
+}
+
+export interface ListenProduct {
+  sequence: number;
+  utterance_id: string;
+  text: string;
+  is_final: boolean;
+  words: WordSpan[];
+  language: string;
+}
+
+export interface TranslateProduct {
+  sequence: number;
+  source_utterance_id: string;
+  target_utterance_id: string;
+  text: string;
+  is_final: boolean;
+  words: WordSpan[];
+  instructions: SynthesisInstructions | null;
+}
+
+export interface SpeakProduct {
+  sequence: number;
+  target_utterance_id: string;
+  pcm: string;
+  sample_rate: number;
+  start_ms: number | null;
+  end_ms: number | null;
+}

@@ -1,9 +1,9 @@
 """Stage protocols for composable translation pipelines.
 
 Each stage is an independent, async-streaming component:
-  ASRStage:         audio bytes → transcript strings
-  TranslationStage: source strings → target strings
-  TTSStage:         text strings → audio bytes
+  ASRStage:         audio bytes → ListenProduct
+  TranslationStage: ListenProduct → TranslateProduct
+  TTSStage:         TranslateProduct → audio bytes (or SpeakProduct)
   ProsodyStage:     audio bytes → prosody metadata envelopes
 """
 
@@ -14,7 +14,13 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from src.models import MetadataEnvelope, MetadataKind, ProsodyFrame
+from src.models import (
+    ListenProduct,
+    MetadataEnvelope,
+    MetadataKind,
+    ProsodyFrame,
+    TranslateProduct,
+)
 from src.pipelines._pitch import (
     DEFAULT_F0_MAX_HZ,
     DEFAULT_F0_MIN_HZ,
@@ -27,29 +33,38 @@ from src.pipelines._pitch import (
 
 @runtime_checkable
 class ASRStage(Protocol):
-    """Speech-to-text: consumes audio chunks, yields transcript strings."""
+    """Speech-to-text: consumes audio chunks, yields structured listen products."""
 
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
-    def transcribe(self, audio_stream: AsyncIterator[bytes]) -> AsyncIterator[str]: ...
+    def transcribe(
+        self, audio_stream: AsyncIterator[bytes]
+    ) -> AsyncIterator[ListenProduct]: ...
 
 
 @runtime_checkable
 class TranslationStage(Protocol):
-    """Text-to-text: consumes source-language strings, yields target-language strings."""
+    """Text-to-text: consumes listen products, yields translate products."""
 
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
-    def translate(self, text_stream: AsyncIterator[str]) -> AsyncIterator[str]: ...
+    def translate(
+        self,
+        text_stream: AsyncIterator[ListenProduct],
+        *,
+        prosody: AsyncIterator[MetadataEnvelope] | None = None,
+    ) -> AsyncIterator[TranslateProduct]: ...
 
 
 @runtime_checkable
 class TTSStage(Protocol):
-    """Text-to-speech: consumes text strings, yields audio bytes."""
+    """Text-to-speech: consumes translate products, yields audio bytes."""
 
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
-    def synthesize(self, text_stream: AsyncIterator[str]) -> AsyncIterator[bytes]: ...
+    def synthesize(
+        self, text_stream: AsyncIterator[TranslateProduct]
+    ) -> AsyncIterator[bytes]: ...
 
 
 @runtime_checkable

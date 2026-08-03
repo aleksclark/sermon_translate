@@ -5,8 +5,11 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
-from src.models import MetadataEnvelope, OutputStreamInfo, PipelineInfo, Session
+from pydantic import BaseModel
+
+from src.models import MetadataEnvelope, OutputStreamInfo, PipelineInfo, Session, StageKind
 
 
 class OutputStreamKind(StrEnum):
@@ -34,6 +37,9 @@ class BasePipeline(abc.ABC):
         ] = {}
         self._session_metadata_queues: dict[
             tuple[str | None, str], asyncio.Queue[MetadataEnvelope | None]
+        ] = {}
+        self._session_stage_event_queues: dict[
+            str | None, asyncio.Queue[dict[str, Any] | None]
         ] = {}
 
     @property
@@ -137,6 +143,59 @@ class BasePipeline(abc.ABC):
         ]
         for key in metadata_keys:
             del self._session_metadata_queues[key]
+        self._session_stage_event_queues.pop(session.id, None)
+
+    def _stage_event_queue(
+        self, session: Session | None
+    ) -> asyncio.Queue[dict[str, Any] | None]:
+        key = session.id if session is not None else None
+        queue = self._session_stage_event_queues.get(key)
+        if queue is None:
+            queue = asyncio.Queue(maxsize=8)
+            self._session_stage_event_queues[key] = queue
+        return queue
+
+    async def _publish_stage_event(
+        self, stage: StageKind, product: BaseModel, session: Session | None
+    ) -> None:
+        payload = {
+            "stage": stage.value,
+            "product": product.model_dump(mode="json"),
+        }
+        queue = self._stage_event_queue(session)
+        while True:
+            try:
+                queue.put_nowait(payload)
+                return
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    await asyncio.sleep(0)
+
+    async def _finish_stage_events(self, session: Session | None) -> None:
+        await self._stage_event_queue(session).put(None)
+
+    async def _drain_stage_events(
+        self, session: Session | None
+    ) -> AsyncIterator[dict[str, Any]]:
+        key = session.id if session is not None else None
+        queue = self._stage_event_queue(session)
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    return
+                yield item
+        finally:
+            if self._session_stage_event_queues.get(key) is queue:
+                del self._session_stage_event_queues[key]
+
+    def iter_stage_events(
+        self, session: Session | None = None
+    ) -> AsyncIterator[dict[str, Any]] | None:
+        """Return structured stage.product events for admin debug fan-out."""
+        return None
 
     def iter_metadata_stream(
         self,

@@ -18,21 +18,26 @@ from src.models import (
     AudioSource,
     CrosstalkChannelInfo,
     CrosstalkSessionInfo,
+    ListenProduct,
     MetadataEnvelope,
     MetadataKind,
     OutputStreamInfo,
     PipelineInfo,
     ProsodyFrame,
+    ProsodyToken,
     ServerStats,
     Session,
     SessionCreate,
     SessionStats,
     SessionStatus,
     SessionUpdate,
+    SpeakProduct,
     StageInfo,
     StageKind,
     StageSelection,
     SynthesisInstructions,
+    TranslateProduct,
+    WordSpan,
 )
 
 SHARED_MODELS: list[type] = [
@@ -54,6 +59,11 @@ SHARED_MODELS: list[type] = [
     ProsodyFrame,
     SynthesisInstructions,
     MetadataEnvelope,
+    ProsodyToken,
+    WordSpan,
+    ListenProduct,
+    TranslateProduct,
+    SpeakProduct,
 ]
 
 REQUEST_MODELS: set[str] = {"SessionCreate", "SessionUpdate"}

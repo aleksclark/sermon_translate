@@ -3,6 +3,7 @@ from .base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
 from .composed import ComposedPipeline
 from .echo import EchoPipeline
 from .prosody_echo import ProsodyEchoPipeline
+from .prosody_tokens import ProsodyAligner, quantize_prosody
 from .registry import PipelineRegistry, create_default_registry
 from .spanish import SpanishTranslationPipeline
 from .spanish_direct import SpanishDirectPipeline
@@ -21,6 +22,7 @@ __all__ = [
     "PipelineRegistry",
     "PitchEstimate",
     "PitchTracker",
+    "ProsodyAligner",
     "ProsodyEchoPipeline",
     "ProsodyStage",
     "SpanishDirectPipeline",
@@ -33,4 +35,5 @@ __all__ = [
     "YinPitchTracker",
     "create_default_registry",
     "create_default_stage_registry",
+    "quantize_prosody",
 ]

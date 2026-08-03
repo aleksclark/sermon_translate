@@ -8,6 +8,7 @@ import pytest
 from src.api.deps import init_deps
 from src.api.store import SessionStore
 from src.models import (
+    ListenProduct,
     MetadataEnvelope,
     MetadataKind,
     PipelineInfo,
@@ -16,8 +17,11 @@ from src.models import (
     Session,
     SessionCreate,
     SessionStatus,
+    StageKind,
+    StageSelection,
+    WordSpan,
 )
-from src.pipelines import PipelineRegistry
+from src.pipelines import ComposedPipeline, PipelineRegistry, create_default_stage_registry
 from src.pipelines.base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
 from src.transport.base import EventType, TransportConnection, TransportEvent
 from src.transport.handler import run_session
@@ -406,5 +410,68 @@ async def test_metadata_streams_are_session_isolated_and_ordered() -> None:
     assert [p["metadata"]["sequence"] for p in second_meta] == [0]
     assert [p["metadata"]["payload"]["session"] for p in second_meta] == [second.id]
     assert pipeline._session_metadata_queues == {}
+    assert pipeline._ref_count == 0
+
+
+def _tone_chunk(sample_rate: int = 16000, seconds: float = 0.05) -> bytes:
+    import numpy as np
+
+    t = np.arange(int(sample_rate * seconds), dtype=np.float32) / sample_rate
+    tone = 0.5 * np.sin(2 * np.pi * 220.0 * t)
+    return (tone * 32767).clip(-32768, 32767).astype(np.int16).tobytes()
+
+
+async def test_composed_stage_product_and_transcript_events_are_forwarded() -> None:
+    store = SessionStore()
+    registry = PipelineRegistry()
+    pipeline = ComposedPipeline(create_default_stage_registry())
+    registry.register(pipeline)
+    init_deps(store, registry, ServerStatsTracker())
+    session = store.create(
+        SessionCreate(
+            pipeline_id="composed",
+            sample_rate=16000,
+            stages=StageSelection(
+                listen="passthrough-listen",
+                translate="passthrough-translate",
+                speak="passthrough-speak",
+                prosody="baseline-prosody",
+            ),
+        )
+    )
+    transport = BlockingTransport(
+        audio=[_tone_chunk()],
+        events=[TransportEvent(type=EventType.AUDIO_END, session_id=session.id)],
+    )
+
+    await asyncio.wait_for(run_session(transport, session.id), timeout=2)
+
+    pipeline_events = [
+        event.payload
+        for event in transport.sent_events
+        if event.type == EventType.PIPELINE_EVENT
+    ]
+    transcripts = [p for p in pipeline_events if p.get("kind") == "transcript"]
+    stage_products = [p for p in pipeline_events if p.get("kind") == "stage.product"]
+    metadata = [p for p in pipeline_events if p.get("kind") == "metadata"]
+
+    assert transcripts
+    assert {p["stream"] for p in transcripts} >= {"listen", "translate"}
+    assert all("text" in p for p in transcripts)
+
+    assert stage_products
+    assert {p["stage"] for p in stage_products} >= {"listen", "translate"}
+    listen_products = [
+        ListenProduct.model_validate(p["product"])
+        for p in stage_products
+        if p["stage"] == StageKind.LISTEN.value
+    ]
+    assert listen_products
+    assert all(p.text for p in listen_products)
+    assert all(isinstance(word, WordSpan) for p in listen_products for word in p.words)
+
+    assert metadata
+    assert all(p["stream"] == "prosody" for p in metadata)
+    assert pipeline._session_stage_event_queues == {}
     assert pipeline._ref_count == 0
 

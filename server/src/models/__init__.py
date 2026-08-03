@@ -21,6 +21,13 @@ from .session import (
     StageKind,
     StageSelection,
 )
+from .stage_messages import (
+    ListenProduct,
+    ProsodyToken,
+    SpeakProduct,
+    TranslateProduct,
+    WordSpan,
+)
 from .stats import ServerStats, ServerStatsTracker
 
 __all__ = [
@@ -28,11 +35,13 @@ __all__ = [
     "AudioSource",
     "CrosstalkChannelInfo",
     "CrosstalkSessionInfo",
+    "ListenProduct",
     "MetadataEnvelope",
     "MetadataKind",
     "OutputStreamInfo",
     "PipelineInfo",
     "ProsodyFrame",
+    "ProsodyToken",
     "RTCOffer",
     "ServerStats",
     "ServerStatsTracker",
@@ -41,8 +50,11 @@ __all__ = [
     "SessionStats",
     "SessionStatus",
     "SessionUpdate",
+    "SpeakProduct",
     "StageInfo",
     "StageKind",
     "StageSelection",
     "SynthesisInstructions",
+    "TranslateProduct",
+    "WordSpan",
 ]

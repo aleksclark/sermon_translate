@@ -2,9 +2,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from typing import Any
 
-from src.models import MetadataEnvelope, PipelineInfo, Session, StageKind, StageSelection
+from src.models import (
+    ListenProduct,
+    MetadataEnvelope,
+    PipelineInfo,
+    Session,
+    StageKind,
+    StageSelection,
+    TranslateProduct,
+)
 from src.pipelines.base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
+from src.pipelines.prosody_tokens import ProsodyAligner
 from src.pipelines.stage_registry import StageFactory, StageRegistry
 from src.pipelines.stages import ASRStage, ProsodyStage, TranslationStage, TTSStage
 
@@ -22,7 +32,29 @@ async def _queue_bytes(queue: asyncio.Queue[bytes | None]) -> AsyncIterator[byte
         yield item
 
 
-async def _queue_text(queue: asyncio.Queue[str | None]) -> AsyncIterator[str]:
+async def _queue_listen(
+    queue: asyncio.Queue[ListenProduct | None],
+) -> AsyncIterator[ListenProduct]:
+    while True:
+        item = await queue.get()
+        if item is None:
+            return
+        yield item
+
+
+async def _queue_translate(
+    queue: asyncio.Queue[TranslateProduct | None],
+) -> AsyncIterator[TranslateProduct]:
+    while True:
+        item = await queue.get()
+        if item is None:
+            return
+        yield item
+
+
+async def _queue_metadata(
+    queue: asyncio.Queue[MetadataEnvelope | None],
+) -> AsyncIterator[MetadataEnvelope]:
     while True:
         item = await queue.get()
         if item is None:
@@ -47,6 +79,7 @@ class ComposedPipeline(BasePipeline):
     def __init__(self, stage_registry: StageRegistry) -> None:
         super().__init__()
         self._stage_registry = stage_registry
+        self._aligner = ProsodyAligner()
 
     @property
     def info(self) -> PipelineInfo:
@@ -138,24 +171,53 @@ class ComposedPipeline(BasePipeline):
             outputs.append(prosody_audio)
 
         tee_task = asyncio.create_task(_tee_audio(audio_stream, outputs))
+
+        prosody_frames: list[MetadataEnvelope] = []
+        prosody_frames_lock = asyncio.Lock()
+        prosody_for_translate: asyncio.Queue[MetadataEnvelope | None] | None = None
         prosody_task: asyncio.Task[None] | None = None
         if prosody is not None and prosody_audio is not None:
+            prosody_for_translate = asyncio.Queue(maxsize=QUEUE_CAPACITY)
             prosody_task = asyncio.create_task(
-                self._run_prosody(prosody, prosody_audio, session)
+                self._run_prosody(
+                    prosody,
+                    prosody_audio,
+                    session,
+                    prosody_frames,
+                    prosody_frames_lock,
+                    prosody_for_translate,
+                )
             )
 
-        source_text: asyncio.Queue[str | None] = asyncio.Queue(maxsize=QUEUE_CAPACITY)
-        target_text: asyncio.Queue[str | None] = asyncio.Queue(maxsize=QUEUE_CAPACITY)
+        source_products: asyncio.Queue[ListenProduct | None] = asyncio.Queue(
+            maxsize=QUEUE_CAPACITY
+        )
+        target_products: asyncio.Queue[TranslateProduct | None] = asyncio.Queue(
+            maxsize=QUEUE_CAPACITY
+        )
 
         listen_task = asyncio.create_task(
-            self._run_listen(listen, listen_audio, source_text, session)
+            self._run_listen(
+                listen,
+                listen_audio,
+                source_products,
+                session,
+                prosody_frames,
+                prosody_frames_lock,
+            )
         )
         translate_task = asyncio.create_task(
-            self._run_translate(translate, source_text, target_text, session)
+            self._run_translate(
+                translate,
+                source_products,
+                target_products,
+                session,
+                prosody_for_translate,
+            )
         )
 
         try:
-            async for chunk in speak.synthesize(_queue_text(target_text)):
+            async for chunk in speak.synthesize(_queue_translate(target_products)):
                 yield chunk
         finally:
             for task in (listen_task, translate_task, tee_task, prosody_task):
@@ -171,6 +233,7 @@ class ComposedPipeline(BasePipeline):
             await self._finish_text(LISTEN_STREAM, session)
             await self._finish_text(TRANSLATE_STREAM, session)
             await self._finish_metadata(PROSODY_STREAM, session)
+            await self._finish_stage_events(session)
             await speak.stop()
             await translate.stop()
             await listen.stop()
@@ -181,38 +244,63 @@ class ComposedPipeline(BasePipeline):
         self,
         listen: ASRStage,
         audio_queue: asyncio.Queue[bytes | None],
-        source_text: asyncio.Queue[str | None],
+        source_products: asyncio.Queue[ListenProduct | None],
         session: Session | None,
+        prosody_frames: list[MetadataEnvelope],
+        prosody_frames_lock: asyncio.Lock,
     ) -> None:
         try:
-            async for text in listen.transcribe(_queue_bytes(audio_queue)):
-                await self._publish_text(LISTEN_STREAM, text, session)
-                await source_text.put(text)
+            async for product in listen.transcribe(_queue_bytes(audio_queue)):
+                async with prosody_frames_lock:
+                    frames_snapshot = list(prosody_frames)
+                aligned = self._aligner.align(product, frames_snapshot)
+                await self._publish_text(LISTEN_STREAM, aligned.text, session)
+                await self._publish_stage_event(StageKind.LISTEN, aligned, session)
+                await source_products.put(aligned)
         finally:
-            await source_text.put(None)
+            await source_products.put(None)
 
     async def _run_translate(
         self,
         translate: TranslationStage,
-        source_text: asyncio.Queue[str | None],
-        target_text: asyncio.Queue[str | None],
+        source_products: asyncio.Queue[ListenProduct | None],
+        target_products: asyncio.Queue[TranslateProduct | None],
         session: Session | None,
+        prosody_for_translate: asyncio.Queue[MetadataEnvelope | None] | None,
     ) -> None:
         try:
-            async for text in translate.translate(_queue_text(source_text)):
-                await self._publish_text(TRANSLATE_STREAM, text, session)
-                await target_text.put(text)
+            prosody_stream = (
+                _queue_metadata(prosody_for_translate)
+                if prosody_for_translate is not None
+                else None
+            )
+            async for product in translate.translate(
+                _queue_listen(source_products),
+                prosody=prosody_stream,
+            ):
+                await self._publish_text(TRANSLATE_STREAM, product.text, session)
+                await self._publish_stage_event(StageKind.TRANSLATE, product, session)
+                await target_products.put(product)
         finally:
-            await target_text.put(None)
+            await target_products.put(None)
 
     async def _run_prosody(
         self,
         prosody: ProsodyStage,
         audio_queue: asyncio.Queue[bytes | None],
         session: Session | None,
+        prosody_frames: list[MetadataEnvelope],
+        prosody_frames_lock: asyncio.Lock,
+        prosody_for_translate: asyncio.Queue[MetadataEnvelope | None],
     ) -> None:
-        async for envelope in prosody.analyze(_queue_bytes(audio_queue), PROSODY_STREAM):
-            await self._publish_metadata(PROSODY_STREAM, envelope, session)
+        try:
+            async for envelope in prosody.analyze(_queue_bytes(audio_queue), PROSODY_STREAM):
+                async with prosody_frames_lock:
+                    prosody_frames.append(envelope)
+                await self._publish_metadata(PROSODY_STREAM, envelope, session)
+                await prosody_for_translate.put(envelope)
+        finally:
+            await prosody_for_translate.put(None)
 
     def iter_stream(
         self,
@@ -233,3 +321,8 @@ class ComposedPipeline(BasePipeline):
         if name == PROSODY_STREAM:
             return self._drain_metadata(name, session)
         return None
+
+    def iter_stage_events(
+        self, session: Session | None = None
+    ) -> AsyncIterator[dict[str, Any]] | None:
+        return self._drain_stage_events(session)

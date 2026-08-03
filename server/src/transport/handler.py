@@ -188,6 +188,28 @@ async def run_session(transport: TransportConnection, session_id: str) -> None:
             audio_fanout_queues.append(audio_queue)
             processor_tasks.append(asyncio.create_task(forward_audio(queue_iter(audio_queue))))
 
+        iter_stage_events = getattr(pipeline, "iter_stage_events", None)
+        if iter_stage_events is not None:
+            stage_iterator = iter_stage_events(session=session)
+            if stage_iterator is not None:
+                async def _forward_stage_events(
+                    iterator: AsyncIterator[dict[str, object]] = stage_iterator,
+                ) -> None:
+                    async for payload in iterator:
+                        await transport.send_event(
+                            TransportEvent(
+                                type=EventType.PIPELINE_EVENT,
+                                session_id=session_id,
+                                payload={
+                                    "kind": "stage.product",
+                                    "stage": payload["stage"],
+                                    "product": payload["product"],
+                                },
+                            )
+                        )
+
+                processor_tasks.append(asyncio.create_task(_forward_stage_events()))
+
         input_task = asyncio.create_task(audio_input())
         terminal_task = asyncio.create_task(listen_for_terminal())
         stats_task = asyncio.create_task(stats_loop())
