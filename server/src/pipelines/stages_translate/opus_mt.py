@@ -51,12 +51,7 @@ class OpusMTTranslateStage:
         if self._translator is not None:
             return
         if self._cache is not None:
-            # Prefer shared cache path when operators set MODEL_CACHE_DIR.
-            cache_root = str(self._cache.path_for("custom", "opus-mt-en-es"))
-            os.environ.setdefault(
-                "XDG_CACHE_HOME",
-                os.path.dirname(os.path.dirname(cache_root)),
-            )
+            os.environ.setdefault("MODEL_CACHE_DIR", str(self._cache.root))
         loop = asyncio.get_running_loop()
         helper = SpanishTranslationPipeline()
         self._translator, self._sp_source, self._sp_target = await loop.run_in_executor(

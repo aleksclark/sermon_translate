@@ -107,11 +107,19 @@ class SpanishTranslationPipeline(BasePipeline):
         ct2_dir = self._get_ct2_model_dir()
         hf_dir = snapshot_download(TRANSLATION_MODEL_ID)
 
-        translator = ctranslate2.Translator(
-            ct2_dir,
-            device=settings.compute_device,
-            compute_type=settings.resolved_compute_type(),
-        )
+        device = settings.compute_device
+        compute_type = settings.resolved_compute_type()
+        # ctranslate2 accepts cpu/cuda; strip ordinals like cuda:0.
+        if device.startswith("cuda"):
+            device = "cuda"
+        try:
+            translator = ctranslate2.Translator(
+                ct2_dir,
+                device=device,
+                compute_type=compute_type,
+            )
+        except (ValueError, RuntimeError):
+            translator = ctranslate2.Translator(ct2_dir, device="cpu", compute_type="int8")
         sp_src = spm.SentencePieceProcessor()
         sp_src.load(f"{hf_dir}/source.spm")  # type: ignore[attr-defined]
         sp_tgt = spm.SentencePieceProcessor()
@@ -119,17 +127,35 @@ class SpanishTranslationPipeline(BasePipeline):
         return translator, sp_src, sp_tgt
 
     @staticmethod
+    def _ct2_candidate_dirs() -> list[str]:
+        import os
+        from pathlib import Path
+
+        home_cache = Path.home() / ".cache"
+        xdg = Path(os.environ.get("XDG_CACHE_HOME", home_cache))
+        model_cache = os.environ.get("MODEL_CACHE_DIR", "").strip()
+        candidates = [
+            xdg / "sermon_translate" / "opus-mt-en-es-ct2",
+            home_cache / "sermon_translate" / "opus-mt-en-es-ct2",
+            xdg / "sermon-translate" / "models" / "custom" / "opus-mt-en-es" / "ct2",
+            home_cache / "sermon-translate" / "models" / "custom" / "opus-mt-en-es" / "ct2",
+        ]
+        if model_cache:
+            root = Path(model_cache).expanduser()
+            candidates.insert(0, root / "custom" / "opus-mt-en-es" / "ct2")
+            candidates.insert(1, root / "opus-mt-en-es-ct2")
+        return [str(path) for path in candidates]
+
+    @staticmethod
     def _get_ct2_model_dir() -> str:
         import os
 
-        cache_dir = os.path.join(
-            os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
-            "sermon_translate",
-            "opus-mt-en-es-ct2",
-        )
-        model_bin = os.path.join(cache_dir, "model.bin")
-        if not os.path.exists(model_bin):
-            SpanishTranslationPipeline._convert_model(cache_dir)
+        for cache_dir in SpanishTranslationPipeline._ct2_candidate_dirs():
+            if os.path.exists(os.path.join(cache_dir, "model.bin")):
+                return cache_dir
+
+        cache_dir = SpanishTranslationPipeline._ct2_candidate_dirs()[0]
+        SpanishTranslationPipeline._convert_model(cache_dir)
         return cache_dir
 
     @staticmethod
@@ -139,11 +165,15 @@ class SpanishTranslationPipeline(BasePipeline):
         os.makedirs(output_dir, exist_ok=True)
         logger.info("Converting translation model to CTranslate2 (one-time)...")
         try:
+            import torch  # noqa: F401
             from ctranslate2.converters.transformers import TransformersConverter
         except ImportError as exc:
             raise RuntimeError(
-                "Model conversion requires 'torch' and 'transformers' packages. "
-                "Install them or provide a pre-converted model at: " + output_dir
+                "Model conversion requires a working 'torch' import and "
+                "'transformers'. This environment could not import torch "
+                "(often missing CUDA libs such as libcudnn). Install a CPU "
+                "torch build or place a pre-converted CTranslate2 model at: "
+                + output_dir
             ) from exc
 
         converter = TransformersConverter(TRANSLATION_MODEL_ID)
