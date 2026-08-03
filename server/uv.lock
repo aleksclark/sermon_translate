@@ -2888,12 +2888,16 @@ dependencies = [
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "numpy" },
-    { name = "seamless-communication" },
     { name = "sentencepiece" },
     { name = "torch" },
     { name = "torchaudio" },
     { name = "transformers" },
     { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+seamless = [
+    { name = "seamless-communication" },
 ]
 
 [package.dev-dependencies]
@@ -2912,13 +2916,14 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.135.1" },
     { name = "faster-whisper", specifier = ">=1.1.0" },
     { name = "numpy", specifier = ">=1.23" },
-    { name = "seamless-communication", git = "https://github.com/aleksclark/seamless_communication.git?branch=main" },
+    { name = "seamless-communication", marker = "extra == 'seamless'", git = "https://github.com/aleksclark/seamless_communication.git?branch=main" },
     { name = "sentencepiece", specifier = ">=0.2.0" },
     { name = "torch", specifier = ">=2.0" },
     { name = "torchaudio", specifier = ">=2.0" },
     { name = "transformers", specifier = ">=4.44,<5" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.41.0" },
 ]
+provides-extras = ["seamless"]
 
 [package.metadata.requires-dev]
 dev = [

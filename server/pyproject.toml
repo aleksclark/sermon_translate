@@ -10,12 +10,16 @@ dependencies = [
     "faster-whisper>=1.1.0",
     "fastapi>=0.135.1",
     "numpy>=1.23",
-    "seamless-communication",
     "sentencepiece>=0.2.0",
     "torch>=2.0",
     "torchaudio>=2.0",
     "transformers>=4.44,<5",
     "uvicorn[standard]>=0.41.0",
+]
+
+[project.optional-dependencies]
+seamless = [
+    "seamless-communication",
 ]
 
 [project.scripts]
