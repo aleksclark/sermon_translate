@@ -67,10 +67,15 @@ class KyutaiListenStage:
 
     def _load_models(self) -> None:
         ensure_nvidia_library_path()
+        # Moshi CUDA graphs break under concurrent session/model loads.
+        os.environ.setdefault("NO_CUDA_GRAPH", "1")
         import julius
         import torch
         from moshi.models.lm import LMGen
         from moshi.models.loaders import CheckpointInfo
+        from moshi.utils.compile import no_cuda_graph
+
+        from src.runtime.gpu_lock import gpu_model_load_lock
 
         self._torch = torch
         self._julius = julius
@@ -79,12 +84,17 @@ class KyutaiListenStage:
         else:
             self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        info = CheckpointInfo.from_hf_repo(self._hf_repo)
-        self._mimi = info.get_mimi(device=self._device)
-        self._tokenizer = info.get_text_tokenizer()
-        dtype = torch.bfloat16 if self._device.startswith("cuda") else torch.float32
-        lm = info.get_moshi(device=self._device, dtype=dtype)
-        self._lm_gen = LMGen(lm, temp=0, temp_text=0.0)
+        with gpu_model_load_lock(), no_cuda_graph():
+            if self._device.startswith("cuda"):
+                torch.cuda.synchronize()
+            info = CheckpointInfo.from_hf_repo(self._hf_repo)
+            self._mimi = info.get_mimi(device=self._device)
+            self._tokenizer = info.get_text_tokenizer()
+            dtype = torch.bfloat16 if self._device.startswith("cuda") else torch.float32
+            lm = info.get_moshi(device=self._device, dtype=dtype)
+            self._lm_gen = LMGen(lm, temp=0, temp_text=0.0)
+            if self._device.startswith("cuda"):
+                torch.cuda.synchronize()
         stt_config = info.stt_config or {}
         raw_config = info.raw_config or {}
         self._prefix_seconds = float(stt_config.get("audio_silence_prefix_seconds", 0.0))

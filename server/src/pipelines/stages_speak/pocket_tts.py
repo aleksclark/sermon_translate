@@ -63,10 +63,14 @@ class PocketTTSSpeakStage:
 
     def _load(self) -> None:
         ensure_nvidia_library_path()
+        os.environ.setdefault("NO_CUDA_GRAPH", "1")
         from pocket_tts import TTSModel  # type: ignore[import-not-found]
 
-        self._model = TTSModel.load_model(language=self._language)
-        self._voice_state = self._model.get_state_for_audio_prompt(self._voice)
+        from src.runtime.gpu_lock import gpu_model_load_lock
+
+        with gpu_model_load_lock():
+            self._model = TTSModel.load_model(language=self._language)
+            self._voice_state = self._model.get_state_for_audio_prompt(self._voice)
 
     async def stop(self) -> None:
         self._model = None

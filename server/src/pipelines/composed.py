@@ -182,14 +182,12 @@ class ComposedPipeline(BasePipeline):
             assert isinstance(created, ProsodyStage)
             prosody = created
 
-        # Start listen/translate/prosody first so ASR can run while speak loads.
-        start_tasks = [
-            asyncio.create_task(listen_handle.start()),
-            asyncio.create_task(translate_handle.start()),
-        ]
+        # Start stages sequentially: concurrent CUDA model construction races
+        # moshi CUDA graphs ("Offset increment outside graph capture").
+        await listen_handle.start()
+        await translate_handle.start()
         if prosody_handle is not None:
-            start_tasks.append(asyncio.create_task(prosody_handle.start()))
-        await asyncio.gather(*start_tasks)
+            await prosody_handle.start()
         speak_start_task = asyncio.create_task(speak_handle.start())
 
         listen_audio: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=QUEUE_CAPACITY)
