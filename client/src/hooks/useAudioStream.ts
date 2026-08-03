@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MetadataEnvelope, SessionStats } from "../api/index.ts";
+import type {
+  ListenProduct,
+  MetadataEnvelope,
+  SessionStats,
+  StageKind,
+  TranslateProduct,
+} from "../api/index.ts";
 import type { AudioSource } from "../components/NewSessionModal.tsx";
 import type { TransportEvent } from "../transport/index.ts";
 import { WebRTCTransport } from "../transport/index.ts";
+
+const MAX_STREAM_LINES = 200;
 
 interface AudioStreamOptions {
   sessionId: string;
@@ -25,12 +33,40 @@ export interface MetadataUpdate {
   timestamp: number;
 }
 
+export type StageProduct = ListenProduct | TranslateProduct | Record<string, unknown>;
+
+export interface StageProductUpdate {
+  stage: StageKind;
+  product: StageProduct;
+  timestamp: number;
+}
+
+const STAGE_KINDS = new Set<StageKind>(["listen", "translate", "speak", "prosody"]);
+
+function appendCapped<T>(items: T[] | undefined, item: T, max = MAX_STREAM_LINES): T[] {
+  const next = [...(items || []), item];
+  return next.length > max ? next.slice(next.length - max) : next;
+}
+
 export function parseMetadataEvent(evt: TransportEvent): MetadataUpdate | null {
   if (evt.type !== "pipeline.event" || evt.payload.kind !== "metadata") return null;
   const stream = (evt.payload.stream as string) || "metadata";
   const envelope = evt.payload.metadata as unknown as MetadataEnvelope;
   if (!envelope) return null;
   return { stream, envelope, timestamp: Date.now() };
+}
+
+export function parseStageProductEvent(evt: TransportEvent): StageProductUpdate | null {
+  if (evt.type !== "pipeline.event" || evt.payload.kind !== "stage.product") return null;
+  const stage = evt.payload.stage;
+  if (typeof stage !== "string" || !STAGE_KINDS.has(stage as StageKind)) return null;
+  const product = evt.payload.product;
+  if (product == null || typeof product !== "object") return null;
+  return {
+    stage: stage as StageKind,
+    product: product as StageProduct,
+    timestamp: Date.now(),
+  };
 }
 
 interface FileMediaStreamResult {
@@ -64,6 +100,7 @@ export function useAudioStream(options: AudioStreamOptions | null) {
   const [liveStats, setLiveStats] = useState<SessionStats | null>(null);
   const [transcripts, setTranscripts] = useState<Record<string, TranscriptLine[]>>({});
   const [metadata, setMetadata] = useState<Record<string, MetadataUpdate[]>>({});
+  const [stageProducts, setStageProducts] = useState<Record<string, StageProductUpdate[]>>({});
   const transportRef = useRef<WebRTCTransport | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const cancelledRef = useRef(false);
@@ -84,6 +121,7 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     setLiveStats(null);
     setTranscripts({});
     setMetadata({});
+    setStageProducts({});
   }, []);
 
   const toggleMute = useCallback(() => {
@@ -182,14 +220,22 @@ export function useAudioStream(options: AudioStreamOptions | null) {
           const line: TranscriptLine = { stream: streamName, text, timestamp: Date.now() };
           setTranscripts((prev) => ({
             ...prev,
-            [streamName]: [...(prev[streamName] || []), line],
+            [streamName]: appendCapped(prev[streamName], line),
           }));
         } else {
+          const stageUpdate = parseStageProductEvent(evt);
+          if (stageUpdate) {
+            setStageProducts((prev) => ({
+              ...prev,
+              [stageUpdate.stage]: appendCapped(prev[stageUpdate.stage], stageUpdate),
+            }));
+            return;
+          }
           const update = parseMetadataEvent(evt);
           if (update) {
             setMetadata((prev) => ({
               ...prev,
-              [update.stream]: [...(prev[update.stream] || []), update],
+              [update.stream]: appendCapped(prev[update.stream], update),
             }));
           }
         }
@@ -207,5 +253,15 @@ export function useAudioStream(options: AudioStreamOptions | null) {
     };
   }, [options?.sessionId]);
 
-  return { connected, muted, error, liveStats, transcripts, metadata, stop, toggleMute };
+  return {
+    connected,
+    muted,
+    error,
+    liveStats,
+    transcripts,
+    metadata,
+    stageProducts,
+    stop,
+    toggleMute,
+  };
 }
