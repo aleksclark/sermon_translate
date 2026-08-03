@@ -30,6 +30,18 @@ variable "crosstalk_base_url" {
   default     = ""
 }
 
+variable "model_cache_dir" {
+  type        = string
+  description = "In-container path for shared model weights (MooseFS mount)."
+  default     = "/models/sermon-translate/models"
+}
+
+variable "enable_moosefs_cache" {
+  type        = bool
+  description = "Mount the host moosefs volume for MODEL_CACHE_DIR sharing."
+  default     = true
+}
+
 variable "ice_stun_urls" {
   type    = string
   default = "stun:stun.l.google.com:19302"
@@ -121,6 +133,17 @@ job "sermon-translate-gpu" {
 
     shutdown_delay = "5s"
 
+    dynamic "volume" {
+      for_each = var.enable_moosefs_cache ? [1] : []
+      labels   = ["models"]
+
+      content {
+        type      = "host"
+        source    = "moosefs"
+        read_only = false
+      }
+    }
+
     network {
       port "http" {
         to = 8000
@@ -182,6 +205,15 @@ job "sermon-translate-gpu" {
         }
       }
 
+      dynamic "volume_mount" {
+        for_each = var.enable_moosefs_cache ? [1] : []
+        content {
+          volume      = "models"
+          destination = "/models"
+          read_only   = false
+        }
+      }
+
       env {
         # In "device" mode the plugin sets NVIDIA_VISIBLE_DEVICES to the
         # assigned GPU IDs; in "runtime" mode nothing assigns them, so it is
@@ -201,7 +233,9 @@ job "sermon-translate-gpu" {
         TURN_USERNAME      = var.turn_username
         TURN_CREDENTIAL    = var.turn_credential
 
-        HF_HOME = "/models/hf"
+        MODEL_CACHE_DIR = var.model_cache_dir
+        HF_HOME         = "${var.model_cache_dir}/huggingface"
+        TORCH_HOME      = "${var.model_cache_dir}/torch"
       }
     }
   }

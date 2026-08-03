@@ -292,6 +292,38 @@ volume_mount {
 }
 ```
 
+## Shared model cache (MooseFS)
+
+Stage workers and the inference server resolve weights through
+`MODEL_CACHE_DIR`. Locally this defaults to
+`~/.cache/sermon-translate/models`. On the Nomad cluster, mount the host
+volume `moosefs` (`/mnt/moosefs`) and point the env var at a shared subpath so
+every allocation reuses the same downloaded weights:
+
+```
+MODEL_CACHE_DIR=/models/sermon-translate/models
+```
+
+The GPU inference job (`sermon-translate-gpu.nomad.hcl`) does this when
+`enable_moosefs_cache=true` (default):
+
+- mounts host volume `moosefs` → `/models`
+- sets `MODEL_CACHE_DIR`, `HF_HOME`, and `TORCH_HOME` under that tree
+
+Layout under the cache root:
+
+```
+{MODEL_CACHE_DIR}/
+  huggingface/     # HF_HOME / hub / transformers
+  torch/           # TORCH_HOME
+  custom/{stage}/  # stage-specific blobs via ModelCache.path_for
+```
+
+Disable the mount for local dry-runs with `-var 'enable_moosefs_cache=false'`.
+Override the in-container path with `-var 'model_cache_dir=...'` if operators
+prefer a different MooseFS subdir. There is no app-level cross-node sync —
+MooseFS is the shared filesystem.
+
 ## VRAM budgeting (16 GB per GPU)
 
 Each V100 has **16 GB**. Rough guidance for a single GPU:

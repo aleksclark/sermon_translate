@@ -209,7 +209,7 @@ class _Factory:
     def info(self) -> StageInfo:
         return self._info
 
-    def create(self, *, sample_rate: int = 48000) -> object:
+    def create(self, *, sample_rate: int = 48000, **_: object) -> object:
         return self._builder(sample_rate=sample_rate)
 
 
@@ -224,7 +224,7 @@ class BaselineProsodyFactory:
             default_for_kind=True,
         )
 
-    def create(self, *, sample_rate: int = 48000) -> BaselineProsodyStage:
+    def create(self, *, sample_rate: int = 48000, **_: object) -> BaselineProsodyStage:
         return BaselineProsodyStage(sample_rate=sample_rate)
 
 

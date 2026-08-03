@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from src.models import StageInfo, StageKind
 
@@ -10,7 +10,7 @@ class StageFactory(Protocol):
     @property
     def info(self) -> StageInfo: ...
 
-    def create(self, *, sample_rate: int = 48000) -> object: ...
+    def create(self, **kwargs: Any) -> object: ...
 
 
 class StageRegistry:

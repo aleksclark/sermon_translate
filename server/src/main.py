@@ -8,11 +8,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.api import SessionStore, crosstalk_router, init_deps
 from src.api import router as api_router
+from src.config import get_settings
 from src.models import ServerStatsTracker
-from src.pipelines import create_default_registry
+from src.pipelines import create_default_registry, create_default_stage_registry
+from src.runtime.local import LocalStageRuntime
+from src.runtime.model_cache import ModelCache
 from src.transport.crosstalk_service import CrosstalkService
 
 LOG_FILE = Path(__file__).resolve().parent.parent.parent / "server.log"
+logger = logging.getLogger(__name__)
 
 
 def _configure_logging() -> None:
@@ -47,8 +51,22 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    settings = get_settings()
+    cache = ModelCache(settings.model_cache_dir)
+    try:
+        cache.ensure_root()
+        logger.info("model cache directory: %s", cache.root)
+    except OSError:
+        logger.warning("model cache directory unavailable: %s", cache.root)
+
     store = SessionStore()
-    registry = create_default_registry()
+    stage_registry = create_default_stage_registry()
+    runtime = LocalStageRuntime(stage_registry, cache)
+    registry = create_default_registry(
+        stage_registry=stage_registry,
+        cache=cache,
+        runtime=runtime,
+    )
     stats = ServerStatsTracker()
     crosstalk_service = CrosstalkService()
     init_deps(

@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
+from src.config import default_model_cache_dir
 from src.models import (
     ListenProduct,
     MetadataEnvelope,
@@ -15,8 +16,11 @@ from src.models import (
 )
 from src.pipelines.base import BasePipeline, OutputStreamDescriptor, OutputStreamKind
 from src.pipelines.prosody_tokens import ProsodyAligner
-from src.pipelines.stage_registry import StageFactory, StageRegistry
+from src.pipelines.stage_registry import StageRegistry, create_default_stage_registry
 from src.pipelines.stages import ASRStage, ProsodyStage, TranslationStage, TTSStage
+from src.runtime.base import StageRuntime
+from src.runtime.local import LocalStageRuntime
+from src.runtime.model_cache import ModelCache
 
 LISTEN_STREAM = "listen"
 TRANSLATE_STREAM = "translate"
@@ -76,9 +80,17 @@ async def _tee_audio(
 class ComposedPipeline(BasePipeline):
     """Wires selectable listen/translate/speak/(prosody) stages into one pipeline."""
 
-    def __init__(self, stage_registry: StageRegistry) -> None:
+    def __init__(
+        self,
+        stage_registry: StageRegistry | None = None,
+        *,
+        runtime: StageRuntime | None = None,
+        cache: ModelCache | None = None,
+    ) -> None:
         super().__init__()
-        self._stage_registry = stage_registry
+        self._stage_registry = stage_registry or create_default_stage_registry()
+        self._cache = cache or ModelCache(default_model_cache_dir())
+        self._runtime = runtime or LocalStageRuntime(self._stage_registry, self._cache)
         self._aligner = ProsodyAligner()
 
     @property
@@ -118,16 +130,6 @@ class ComposedPipeline(BasePipeline):
             ),
         ]
 
-    def _require_factory(self, stage_id: str, kind: StageKind) -> StageFactory:
-        factory = self._stage_registry.get(stage_id)
-        if factory is None:
-            raise ValueError(f"Unknown stage: {stage_id}")
-        if factory.info.kind != kind:
-            raise ValueError(
-                f"Stage {stage_id} has kind {factory.info.kind.value}, expected {kind.value}"
-            )
-        return factory
-
     def _resolve_selection(self, session: Session | None) -> StageSelection:
         if session is None or session.stages is None:
             raise ValueError("composed pipeline requires session.stages")
@@ -137,31 +139,40 @@ class ComposedPipeline(BasePipeline):
         self, audio_stream: AsyncIterator[bytes], session: Session | None = None
     ) -> AsyncIterator[bytes]:
         selection = self._resolve_selection(session)
-        sample_rate = session.sample_rate if session is not None else 48000
+        if session is None:
+            raise ValueError("composed pipeline requires session")
 
-        listen_factory = self._require_factory(selection.listen, StageKind.LISTEN)
-        translate_factory = self._require_factory(selection.translate, StageKind.TRANSLATE)
-        speak_factory = self._require_factory(selection.speak, StageKind.SPEAK)
-
-        listen = listen_factory.create(sample_rate=sample_rate)
-        translate = translate_factory.create(sample_rate=sample_rate)
-        speak = speak_factory.create(sample_rate=sample_rate)
+        listen_handle = await self._runtime.spawn(
+            selection.listen, session, kind=StageKind.LISTEN
+        )
+        translate_handle = await self._runtime.spawn(
+            selection.translate, session, kind=StageKind.TRANSLATE
+        )
+        speak_handle = await self._runtime.spawn(
+            selection.speak, session, kind=StageKind.SPEAK
+        )
+        listen = listen_handle.stage
+        translate = translate_handle.stage
+        speak = speak_handle.stage
         assert isinstance(listen, ASRStage)
         assert isinstance(translate, TranslationStage)
         assert isinstance(speak, TTSStage)
 
         prosody: ProsodyStage | None = None
+        prosody_handle = None
         if selection.prosody is not None:
-            prosody_factory = self._require_factory(selection.prosody, StageKind.PROSODY)
-            created = prosody_factory.create(sample_rate=sample_rate)
+            prosody_handle = await self._runtime.spawn(
+                selection.prosody, session, kind=StageKind.PROSODY
+            )
+            created = prosody_handle.stage
             assert isinstance(created, ProsodyStage)
             prosody = created
 
-        await listen.start()
-        await translate.start()
-        await speak.start()
-        if prosody is not None:
-            await prosody.start()
+        await listen_handle.start()
+        await translate_handle.start()
+        await speak_handle.start()
+        if prosody_handle is not None:
+            await prosody_handle.start()
 
         listen_audio: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=QUEUE_CAPACITY)
         outputs = [listen_audio]
@@ -234,11 +245,11 @@ class ComposedPipeline(BasePipeline):
             await self._finish_text(TRANSLATE_STREAM, session)
             await self._finish_metadata(PROSODY_STREAM, session)
             await self._finish_stage_events(session)
-            await speak.stop()
-            await translate.stop()
-            await listen.stop()
-            if prosody is not None:
-                await prosody.stop()
+            await speak_handle.stop()
+            await translate_handle.stop()
+            await listen_handle.stop()
+            if prosody_handle is not None:
+                await prosody_handle.stop()
 
     async def _run_listen(
         self,

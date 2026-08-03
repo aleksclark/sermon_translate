@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
+from pathlib import Path
 
 
 def _split_csv(value: str) -> list[str]:
@@ -14,6 +15,10 @@ class IceServerConfig:
     urls: list[str]
     username: str | None = None
     credential: str | None = None
+
+
+def default_model_cache_dir() -> Path:
+    return Path.home() / ".cache" / "sermon-translate" / "models"
 
 
 @dataclass(frozen=True)
@@ -31,6 +36,9 @@ class Settings:
 
     compute_device: str = "cpu"
     compute_type: str = ""
+
+    model_cache_dir: Path = field(default_factory=default_model_cache_dir)
+    stage_runtime: str = "local"
 
     def resolved_compute_type(self) -> str:
         if self.compute_type:
@@ -71,6 +79,13 @@ def _float_env(name: str, default: float) -> float:
 
 def load_settings() -> Settings:
     stun = os.environ.get("ICE_STUN_URLS", "stun:stun.l.google.com:19302")
+    cache_raw = os.environ.get("MODEL_CACHE_DIR", "").strip()
+    model_cache_dir = (
+        Path(cache_raw).expanduser() if cache_raw else default_model_cache_dir()
+    )
+    stage_runtime = os.environ.get("STAGE_RUNTIME", "local").strip() or "local"
+    if stage_runtime not in {"local", "subprocess", "remote"}:
+        stage_runtime = "local"
     return Settings(
         ice_stun_urls=_split_csv(stun),
         turn_urls=_split_csv(os.environ.get("TURN_URLS", "")),
@@ -83,6 +98,8 @@ def load_settings() -> Settings:
         crosstalk_request_timeout=_float_env("CROSSTALK_REQUEST_TIMEOUT", 10.0),
         compute_device=os.environ.get("COMPUTE_DEVICE", "cpu").strip() or "cpu",
         compute_type=os.environ.get("COMPUTE_TYPE", "").strip(),
+        model_cache_dir=model_cache_dir,
+        stage_runtime=stage_runtime,
     )
 
 
