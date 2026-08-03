@@ -24,7 +24,7 @@ from src.runtime.model_cache import ModelCache
 LISTEN_STREAM = "listen"
 TRANSLATE_STREAM = "translate"
 PROSODY_STREAM = "prosody"
-QUEUE_CAPACITY = 8
+QUEUE_CAPACITY = 64
 
 
 async def _queue_bytes(queue: asyncio.Queue[bytes | None]) -> AsyncIterator[bytes]:
@@ -65,15 +65,28 @@ async def _queue_metadata(
         yield item
 
 
+async def _put_drop_oldest(queue: asyncio.Queue[Any], item: Any) -> None:
+    """Never block the live audio path on a slow stage consumer."""
+    while True:
+        try:
+            queue.put_nowait(item)
+            return
+        except asyncio.QueueFull:
+            try:
+                queue.get_nowait()
+            except asyncio.QueueEmpty:
+                await asyncio.sleep(0)
+
+
 async def _tee_audio(
     audio_stream: AsyncIterator[bytes],
     outputs: list[asyncio.Queue[bytes | None]],
 ) -> None:
     try:
         async for chunk in audio_stream:
-            await asyncio.gather(*(queue.put(chunk) for queue in outputs))
+            await asyncio.gather(*(_put_drop_oldest(queue, chunk) for queue in outputs))
     finally:
-        await asyncio.gather(*(queue.put(None) for queue in outputs))
+        await asyncio.gather(*(_put_drop_oldest(queue, None) for queue in outputs))
 
 
 class ComposedPipeline(BasePipeline):

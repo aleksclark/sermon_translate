@@ -24,7 +24,6 @@ seamless = [
 listen-kyutai = [
     "moshi>=0.2.6",
     "julius>=0.2.7",
-    "sphn>=0.1.4",
 ]
 tts-qwen = []
 tts-pocket = [
