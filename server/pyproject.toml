@@ -69,3 +69,6 @@ typeCheckingMode = "standard"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "stage_v1_real: real-model stage.v1 E2E (GPU/network; may skip if unavailable)",
+]
