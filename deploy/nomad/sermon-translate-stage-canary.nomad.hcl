@@ -196,15 +196,14 @@ job "sermon-translate-stage-canary" {
     task "worker" {
       driver = "docker"
 
-      config {
+            config {
         image   = local.resolved_image
         ports   = ["ws"]
         runtime = var.gpu_mode == "cpu" ? "runc" : "nvidia"
-        # Image ENTRYPOINT is the worker module; still pass explicit args so
-        # non-entrypoint images (legacy GPU server) keep working.
-        command = "python"
+        # Image ENTRYPOINT is already `python -m src.runtime.worker`.
+        # Pass only CLI flags here — do not repeat the module path (Nomad
+        # appends command/args to ENTRYPOINT and double-invocation fails).
         args = [
-          "-m", "src.runtime.worker",
           "--stage-id", var.stage_id,
           "--host", "0.0.0.0",
           "--port", "8100",

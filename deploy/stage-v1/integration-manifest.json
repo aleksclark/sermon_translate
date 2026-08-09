@@ -27,7 +27,7 @@
   },
   "code": {
     "git_branch": "production-integration",
-    "git_sha": "bbd006a77c9730bce18094a0d1ed33729e97459f",
+    "git_sha": "d6a43efc8c8684fafdddc85e64c9e70373b2a0f7",
     "note": "Implementation tip that was built into the image; packaging/finalization commits may advance HEAD after this pin."
   },
   "conformance_bundle": {
@@ -149,16 +149,17 @@
     "rationale": "Local weights may lack a pinned content digest at boot; network voices are provider-managed. Promotion/release gates must fail closed when a required digest is unavailable rather than inventing one."
   },
   "image": {
-    "built_from_git_sha": "bbd006a77c9730bce18094a0d1ed33729e97459f",
-    "digest": "sha256:819b5740218dfefecf658d7bc2f6bdb7be8f4bfae2ea922f2ec974fe2e0b0c1e",
+    "built_from_git_sha": "d6a43efc8c8684fafdddc85e64c9e70373b2a0f7",
+    "digest": "sha256:678ed21ccd7b2f3f28f46b602bf75e0f0b55f5f49d924dcdfed9ed439810cf36",
     "dockerfile": "server/Dockerfile.stage-worker",
-    "image_at_digest": "997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker@sha256:819b5740218dfefecf658d7bc2f6bdb7be8f4bfae2ea922f2ec974fe2e0b0c1e",
-    "image_ref": "997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker:bbd006a77c9730bce18094a0d1ed33729e97459f",
+    "image_at_digest": "997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker@sha256:678ed21ccd7b2f3f28f46b602bf75e0f0b55f5f49d924dcdfed9ed439810cf36",
+    "image_ref": "997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker:d6a43efc8c8684fafdddc85e64c9e70373b2a0f7",
     "local_image_id": "sha256:c95e9b0ec91970e0ce1ad7e02bb8ce26e39ebfa41af4284cb10d78f0f61e4299",
-    "note": "Real ECR push digest recorded by finalization orchestrator. Prefer image@digest for Nomad image_digest var.",
+    "note": "ECR digest after httpx runtime fix. Prefer image@digest for Nomad.",
+    "previous_digest_failed_boot": "sha256:819b5740218dfefecf658d7bc2f6bdb7be8f4bfae2ea922f2ec974fe2e0b0c1e",
     "registry": "997533895598.dkr.ecr.us-east-2.amazonaws.com",
     "repository": "sermon-translate-stage-worker",
-    "tag": "bbd006a77c9730bce18094a0d1ed33729e97459f"
+    "tag": "d6a43efc8c8684fafdddc85e64c9e70373b2a0f7"
   },
   "implementation": {
     "adapters.py": {
