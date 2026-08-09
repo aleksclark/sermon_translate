@@ -1,7 +1,18 @@
-"""stage.v1 wire contract: models, framing, validation, provenance, scripted peer."""
+"""stage.v1 wire contract: models, framing, validation, provenance, client, host."""
 
 from __future__ import annotations
 
+from src.stage_v1.client import (
+    InboundItem,
+    OutboundItem,
+    PeerTransport,
+    StageClientError,
+    StageTransport,
+    StageV1Client,
+    WebSocketTransport,
+    duplex_tasks_live,
+    wait_first,
+)
 from src.stage_v1.framing import (
     MAGIC,
     DecodedBinaryFrame,
@@ -11,6 +22,12 @@ from src.stage_v1.framing import (
     encode_binary_frame_from_parts,
     validate_text_frame_size,
 )
+from src.stage_v1.health import (
+    build_health_router,
+    health_status_code,
+    mount_health_routes,
+)
+from src.stage_v1.host import SessionState, StageHost, StageHostError
 from src.stage_v1.models import (
     BASELINE_CHANNELS,
     BASELINE_CODEC,
@@ -120,6 +137,7 @@ __all__ = [
     "GapPayload",
     "HealthPayload",
     "HelloPayload",
+    "InboundItem",
     "JS_SAFE_INTEGER_MAX",
     "LimitsAdvertised",
     "LimitsRequested",
@@ -131,9 +149,11 @@ __all__ = [
     "MessageIdTracker",
     "OpenPayload",
     "OpenedPayload",
+    "OutboundItem",
     "PAYLOAD_TYPES",
     "PROSODY_SCHEMA_VERSION",
     "PeerMode",
+    "PeerTransport",
     "ProsodyMarker",
     "ProsodyOverall",
     "ProsodyReport",
@@ -144,25 +164,36 @@ __all__ = [
     "SCHEMA_VERSION",
     "ScriptedResponse",
     "ScriptedStagePeer",
+    "SessionState",
     "SpeakCompletePayload",
     "SpeakRequestPayload",
+    "StageClientError",
     "StageErrorCode",
+    "StageHost",
+    "StageHostError",
     "StageKind",
     "StageModel",
+    "StageTransport",
+    "StageV1Client",
     "TimingKind",
     "TranslateProductPayload",
     "TranslateRequestPayload",
     "ValidationError",
+    "WebSocketTransport",
     "WindowPayload",
     "WordTiming",
+    "build_health_router",
     "canonical_json_bytes",
     "check_deadline",
     "check_fence",
     "check_schema_version",
     "decode_binary_frame",
+    "duplex_tasks_live",
     "encode_binary_frame",
     "encode_binary_frame_from_parts",
+    "health_status_code",
     "message_canonical_bytes",
+    "mount_health_routes",
     "parse_event",
     "parse_event_json",
     "parse_payload",
@@ -171,4 +202,5 @@ __all__ = [
     "sha256_hex",
     "validate_handshake_hello",
     "validate_text_frame_size",
+    "wait_first",
 ]
