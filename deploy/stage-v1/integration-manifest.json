@@ -27,19 +27,37 @@
   },
   "code": {
     "git_branch": "production-integration",
-    "git_sha": "d6a43efc8c8684fafdddc85e64c9e70373b2a0f7",
-    "note": "Implementation tip that was built into the image; packaging/finalization commits may advance HEAD after this pin."
+    "git_sha": "74103b4e3dae9b79c1d9c366467b364dd4779106",
+    "git_sha_image": "d6a43efc8c8684fafdddc85e64c9e70373b2a0f7",
+    "note": "Recompute with git rev-parse HEAD before release pin; may advance if other workers commit first."
   },
   "conformance_bundle": {
     "build_script": "deploy/stage-v1/build-conformance-bundle.sh",
     "bundle_manifest": {
       "bytes": 11268,
       "path": "deploy/stage-v1/conformance-bundle/bundle-manifest.json",
-      "sha256": "23ad470646da2588290801bc5fc14e6a388e2b1104cee3951b6631f50c763ecb"
+      "sha256": "d4c03eaf12a7ab68c83893d6924a8475452a883cee7bbbea1122c4ecf2af81c3"
     },
-    "bundle_manifest_sha256": "23ad470646da2588290801bc5fc14e6a388e2b1104cee3951b6631f50c763ecb",
+    "bundle_manifest_sha256": "d4c03eaf12a7ab68c83893d6924a8475452a883cee7bbbea1122c4ecf2af81c3",
     "file_count": 68,
     "path": "deploy/stage-v1/conformance-bundle/"
+  },
+  "deployment": {
+    "address": "192.168.0.99:26542",
+    "alloc_id": "55d5fbef-bbd4-837d-e3d9-dc3a6183cccb",
+    "canary_job": "sermon-translate-stage-canary",
+    "canary_service": "sermon-stage-canary-listen",
+    "deployment_id": "cae1158a",
+    "ecr_digest": "sha256:678ed21ccd7b2f3f28f46b602bf75e0f0b55f5f49d924dcdfed9ed439810cf36",
+    "force_pull": false,
+    "health_ready": "PASS",
+    "image_mode": "local_preload_of_ecr_digest",
+    "mode": "production",
+    "node": "node-6",
+    "node_id": "e5662c93",
+    "private": true,
+    "remote_conformance": "PASS",
+    "rollback": "nomad job stop -purge sermon-translate-stage-canary"
   },
   "fixtures": {
     "audio": {
@@ -132,7 +150,7 @@
       "schema/index.json": "1956d32742321a91409dc1af40788226f26e8789f92ce4312b56764c4cfc4c2d"
     }
   },
-  "generated_at": "2026-08-09T04:18:27Z",
+  "generated_at": "2026-08-09T05:16:20Z",
   "health": {
     "admission_rule": "Service checks must use /health/ready; never admit on /healthz alone",
     "live": "/health/live",
@@ -154,9 +172,8 @@
     "dockerfile": "server/Dockerfile.stage-worker",
     "image_at_digest": "997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker@sha256:678ed21ccd7b2f3f28f46b602bf75e0f0b55f5f49d924dcdfed9ed439810cf36",
     "image_ref": "997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker:d6a43efc8c8684fafdddc85e64c9e70373b2a0f7",
-    "local_image_id": "sha256:c95e9b0ec91970e0ce1ad7e02bb8ce26e39ebfa41af4284cb10d78f0f61e4299",
-    "note": "ECR digest after httpx runtime fix. Prefer image@digest for Nomad.",
-    "previous_digest_failed_boot": "sha256:819b5740218dfefecf658d7bc2f6bdb7be8f4bfae2ea922f2ec974fe2e0b0c1e",
+    "local_preload_tag": "sermon-translate-stage-worker:d6a43efc8c8684fafdddc85e64c9e70373b2a0f7",
+    "note": "Real ECR digest recorded. Private canary used local preload tag + force_pull=false because fleet Nomad lacks durable ECR pull credentials.",
     "registry": "997533895598.dkr.ecr.us-east-2.amazonaws.com",
     "repository": "sermon-translate-stage-worker",
     "tag": "d6a43efc8c8684fafdddc85e64c9e70373b2a0f7"
@@ -270,36 +287,34 @@
   ],
   "nomad": {
     "admission_health_path": "/health/ready",
-    "canary_job": "sermon-translate-stage-canary",
-    "canary_service": "sermon-stage-canary-listen",
     "jobs": [
       {
-        "bytes": 5496,
+        "bytes": 5658,
         "path": "deploy/nomad/sermon-translate-stage-listen.nomad.hcl",
-        "sha256": "bd42e121cd560cfff71eb8a7461df083c6a6396af4e7ff93cc9a9a914a99240f"
+        "sha256": "c00fb88f4aea13cafc39321ee4d4a79a97a43e29de4224754216ce306954bcea"
       },
       {
-        "bytes": 5187,
+        "bytes": 5349,
         "path": "deploy/nomad/sermon-translate-stage-translate.nomad.hcl",
-        "sha256": "97c1d92d1ed08d4e5f352444144309ff89500234c6e1abd53f9e9eaef800756d"
+        "sha256": "a03f2e72b1e89db263237d32c4fa87a69e1814d6481effe60ef141a1681fcce2"
       },
       {
-        "bytes": 5409,
+        "bytes": 5571,
         "path": "deploy/nomad/sermon-translate-stage-speak.nomad.hcl",
-        "sha256": "19afb9c6a543126647c575163130d3234ef7dedea8db10c3e7ff19c27752734a"
+        "sha256": "ea51415ea9bf8ea5a3c467b26df0e06c2c391c8c5871fd3d5cf0ace661aba6eb"
       },
       {
-        "bytes": 3547,
+        "bytes": 3552,
         "path": "deploy/nomad/sermon-translate-stage-prosody.nomad.hcl",
-        "sha256": "94f269c2623773b79fb3b2120520bbc77901f8da10b4b0e8b935f80699c43aef"
+        "sha256": "78b6ccd69e974637df17114a945e4a33cb2520f2bcabe6acf7fb8146384fcc56"
       },
       {
-        "bytes": 7224,
+        "bytes": 7595,
         "path": "deploy/nomad/sermon-translate-stage-canary.nomad.hcl",
-        "sha256": "fca8c8720743a12e526147aafcca067b35bd50397c1e4e554bd7414137427268"
+        "sha256": "9cf870a12d76397d86e46c35d9c0172710deec3be78744d4bdcf56b9daf3f952"
       }
     ],
-    "note": "Canary job may be run by authorized operators with externally injected auth_token; automation still defaults to validate-only.",
+    "note": "Private canary deployed with externally injected auth_token; no public Traefik/CF.",
     "readme": "deploy/nomad/README-stage-v1.md",
     "validate_only": false
   },

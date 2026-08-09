@@ -29,6 +29,12 @@ variable "image_digest" {
   default     = ""
 }
 
+variable "force_pull" {
+  type        = bool
+  description = "Docker force_pull. false for preloaded local tags when node lacks registry auth."
+  default     = true
+}
+
 variable "stage_id" {
   type        = string
   description = "Registered listen stage id for canary (warm product default: whisper-listen)."
@@ -197,8 +203,9 @@ job "sermon-translate-stage-canary" {
       driver = "docker"
 
             config {
-        image   = local.resolved_image
-        ports   = ["ws"]
+        image      = local.resolved_image
+        ports      = ["ws"]
+        force_pull = var.force_pull
         runtime = var.gpu_mode == "cpu" ? "runc" : "nvidia"
         # Image ENTRYPOINT is already `python -m src.runtime.worker`.
         # Pass only CLI flags here — do not repeat the module path (Nomad
