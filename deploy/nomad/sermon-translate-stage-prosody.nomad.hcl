@@ -115,9 +115,8 @@ job "sermon-translate-stage-prosody" {
       config {
         image   = local.resolved_image
         ports   = ["ws"]
-        command = "python"
+        # Image ENTRYPOINT is already `python -m src.runtime.worker`.
         args = [
-          "-m", "src.runtime.worker",
           "--stage-id", var.stage_id,
           "--host", "0.0.0.0",
           "--port", "8100",
