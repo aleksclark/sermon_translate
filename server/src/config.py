@@ -4,6 +4,10 @@ import os
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.stage_v1.auth import StageV1AuthConfig
 
 
 def _split_csv(value: str) -> list[str]:
@@ -19,6 +23,17 @@ class IceServerConfig:
 
 def default_model_cache_dir() -> Path:
     return Path.home() / ".cache" / "sermon-translate" / "models"
+
+
+def _parse_stage_v1_mode_raw(raw: str | None) -> str:
+    value = (raw or "dev").strip().lower()
+    if value in {"production", "prod"}:
+        return "production"
+    if value in {"test", "testing"}:
+        return "test"
+    if value in {"dev", "development", "local", "", "auto"}:
+        return "dev"
+    return "production"
 
 
 @dataclass(frozen=True)
@@ -43,6 +58,12 @@ class Settings:
     stage_remote_urls: dict[str, str] = field(default_factory=dict)
     stage_worker_start_timeout: float = 60.0
 
+    # stage.v1 serving policy (D11) — plain strings/bools; no stage_v1 import at module load
+    stage_v1_mode: str = "dev"
+    stage_auth_token: str = ""
+    stage_trust_proxy: bool = False
+    stage_allow_loopback_no_auth: bool = True
+
     def resolved_compute_type(self) -> str:
         if self.compute_type:
             return self.compute_type
@@ -61,6 +82,17 @@ class Settings:
                 )
             )
         return servers
+
+    def stage_v1_auth(self) -> StageV1AuthConfig:
+        # Lazy: avoids config ↔ stage_v1 circular import at module load.
+        from src.stage_v1.auth import StageV1AuthConfig, parse_stage_v1_mode
+
+        return StageV1AuthConfig(
+            mode=parse_stage_v1_mode(self.stage_v1_mode),
+            auth_token=self.stage_auth_token,
+            trust_proxy=self.stage_trust_proxy,
+            allow_loopback_without_auth=self.stage_allow_loopback_no_auth,
+        )
 
 
 def _bool_env(name: str, default: bool) -> bool:
@@ -95,6 +127,17 @@ def load_settings() -> Settings:
         remote_urls = parse_remote_urls(os.environ.get("STAGE_REMOTE_URLS", ""))
     except ValueError:
         remote_urls = {}
+
+    mode = _parse_stage_v1_mode_raw(os.environ.get("STAGE_V1_MODE"))
+    token = (os.environ.get("STAGE_AUTH_TOKEN") or "").strip()
+    trust_proxy = _bool_env("STAGE_TRUST_PROXY", False)
+    allow_loopback = _bool_env(
+        "STAGE_ALLOW_LOOPBACK_NO_AUTH",
+        default=mode != "production",
+    )
+    if mode == "production":
+        allow_loopback = False
+
     return Settings(
         ice_stun_urls=_split_csv(stun),
         turn_urls=_split_csv(os.environ.get("TURN_URLS", "")),
@@ -112,6 +155,10 @@ def load_settings() -> Settings:
         stage_worker_python=os.environ.get("STAGE_WORKER_PYTHON", "").strip(),
         stage_remote_urls=remote_urls,
         stage_worker_start_timeout=_float_env("STAGE_WORKER_START_TIMEOUT", 60.0),
+        stage_v1_mode=mode,
+        stage_auth_token=token,
+        stage_trust_proxy=trust_proxy,
+        stage_allow_loopback_no_auth=allow_loopback,
     )
 
 
