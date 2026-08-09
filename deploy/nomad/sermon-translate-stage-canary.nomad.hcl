@@ -1,15 +1,26 @@
-# Listen (ASR) stage worker — stage.v1 Wave 6 packaging (declaration only).
+# PRIVATE stage.v1 listen canary — declaration only.
 #
-# Defaults target warm whisper-listen replacement path. Models load once via
-# StageHost (D6); /health/ready is the admission gate, not /healthz alone.
+# Single count=1 whisper-listen worker for production-integration canary.
+# - Service: sermon-stage-canary-listen (Nomad provider only)
+# - NO Traefik public tags, NO Cloudflare hostname
+# - Prefer gpu_mode=device on meta.gpu=true (node-6); use gpu_mode=cpu if VRAM contended
+# - Auth: STAGE_V1_MODE=production requires -var=auth_token=... (never hardcode)
 #
-# SAFETY: declaration only. Run deploy/scripts/preflight-gpu.sh first.
-# Do NOT `nomad job run` from CI. Validate with: nomad job validate <file>
+# SAFETY: do NOT `nomad job run` from CI. Validate:
+#   nomad job validate -var=auth_token=dummy deploy/nomad/sermon-translate-stage-canary.nomad.hcl
+#
+# Submit (operator, after preflight + image push):
+#   nomad job run \
+#     -var=image=997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker \
+#     -var=image_digest=sha256:... \
+#     -var=auth_token="$STAGE_AUTH_TOKEN" \
+#     -var=trust_proxy=true \
+#     deploy/nomad/sermon-translate-stage-canary.nomad.hcl
 
 variable "image" {
   type        = string
-  description = "Container image reference (tag or registry path)."
-  default     = "sermon-translate-server:gpu"
+  description = "Container image reference (tag or registry path without digest)."
+  default     = "997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker"
 }
 
 variable "image_digest" {
@@ -20,7 +31,7 @@ variable "image_digest" {
 
 variable "stage_id" {
   type        = string
-  description = "Registered listen stage id (warm product default: whisper-listen)."
+  description = "Registered listen stage id for canary (warm product default: whisper-listen)."
   default     = "whisper-listen"
 }
 
@@ -40,8 +51,9 @@ variable "gpu_model" {
 }
 
 variable "gpu_mode" {
-  type    = string
-  default = "device"
+  type        = string
+  description = "device preferred on node-6; cpu fallback when GPU contended."
+  default     = "device"
 
   validation {
     condition     = contains(["device", "runtime", "cpu"], var.gpu_mode)
@@ -62,14 +74,14 @@ variable "auth_token" {
 
 variable "wss_path" {
   type        = string
-  description = "Live stage.v1 WebSocket path (private)."
+  description = "Live stage.v1 WebSocket path (private; not a public edge route)."
   default     = "/stage/v1/stream"
 }
 
 variable "stage_v1_mode" {
   type        = string
-  description = "STAGE_V1_MODE: production|dev|test."
-  default     = "dev"
+  description = "STAGE_V1_MODE: production|dev|test. Canary defaults to production (fail-closed auth)."
+  default     = "production"
 
   validation {
     condition     = contains(["production", "prod", "dev", "test"], var.stage_v1_mode)
@@ -79,36 +91,64 @@ variable "stage_v1_mode" {
 
 variable "trust_proxy" {
   type        = bool
-  description = "STAGE_TRUST_PROXY — honor X-Forwarded-Proto from trusted reverse proxies."
-  default     = false
+  description = "STAGE_TRUST_PROXY — honor X-Forwarded-Proto from trusted internal reverse proxies."
+  default     = true
+}
+
+variable "node_name" {
+  type        = string
+  description = "Optional hard pin to a node name (empty = any meta.gpu=true when gpu_mode!=cpu)."
+  default     = ""
 }
 
 locals {
   resolved_image = var.image_digest != "" ? "${var.image}@${var.image_digest}" : var.image
 }
 
-job "sermon-translate-stage-listen" {
+job "sermon-translate-stage-canary" {
   datacenters = ["home"]
   region      = "home"
   type        = "service"
 
   meta {
-    stage_kind           = "listen"
-    stage_id             = var.stage_id
-    health_ready_path    = "/health/ready"
-    warm_model_notes     = "StageHost loads whisper once; sessions bind via adapters.open_whisper_session_stage"
-    private_wss_path     = var.wss_path
-    image_digest_set     = var.image_digest != "" ? "true" : "false"
+    stage_kind        = "listen"
+    stage_id          = var.stage_id
+    canary            = "true"
+    health_ready_path = "/health/ready"
+    private_wss_path  = var.wss_path
+    stage_v1_mode     = var.stage_v1_mode
+    image_digest_set  = var.image_digest != "" ? "true" : "false"
+    public_edge       = "false"
+    note              = "PRIVATE canary — fleet/Nomad service only; no Cloudflare/Traefik public hostname"
   }
 
-  constraint {
-    attribute = "${meta.gpu}"
-    value     = "true"
-    operator  = "="
+  # Prefer GPU nodes for whisper-listen; skip constraint when cpu fallback.
+  dynamic "constraint" {
+    for_each = var.gpu_mode == "cpu" ? [] : [1]
+    content {
+      attribute = "${meta.gpu}"
+      value     = "true"
+      operator  = "="
+    }
   }
 
-  group "listen" {
+  dynamic "constraint" {
+    for_each = var.node_name != "" ? [var.node_name] : []
+    content {
+      attribute = "${node.unique.name}"
+      value     = constraint.value
+      operator  = "="
+    }
+  }
+
+  group "canary-listen" {
     count = 1
+
+    # Mark allocation meta for operators / discovery filters.
+    meta {
+      canary   = "true"
+      stage_id = var.stage_id
+    }
 
     volume "models" {
       type      = "host"
@@ -122,12 +162,19 @@ job "sermon-translate-stage-listen" {
       }
     }
 
+    # PRIVATE service — Nomad provider only. No traefik tags, no public host.
     service {
-      name     = "sermon-stage-listen"
+      name     = "sermon-stage-canary-listen"
       port     = "ws"
       provider = "nomad"
 
-      # Admission: model warm + canary OK (stage.v1 StageHost).
+      tags = [
+        "canary",
+        "stage.v1",
+        "private",
+        "stage-kind-listen",
+      ]
+
       check {
         name     = "ready"
         type     = "http"
@@ -136,7 +183,6 @@ job "sermon-translate-stage-listen" {
         timeout  = "3s"
       }
 
-      # Process up only — do not use for traffic admission.
       check {
         name     = "live"
         type     = "http"
@@ -153,6 +199,8 @@ job "sermon-translate-stage-listen" {
         image   = local.resolved_image
         ports   = ["ws"]
         runtime = var.gpu_mode == "cpu" ? "runc" : "nvidia"
+        # Image ENTRYPOINT is the worker module; still pass explicit args so
+        # non-entrypoint images (legacy GPU server) keep working.
         command = "python"
         args = [
           "-m", "src.runtime.worker",
@@ -163,8 +211,8 @@ job "sermon-translate-stage-listen" {
       }
 
       resources {
-        cpu    = 2000
-        memory = 6144
+        cpu    = var.gpu_mode == "cpu" ? 2000 : 2000
+        memory = var.gpu_mode == "cpu" ? 4096 : 6144
 
         dynamic "device" {
           for_each = var.gpu_mode == "device" ? [var.gpu_model] : []
@@ -201,7 +249,6 @@ job "sermon-translate-stage-listen" {
         MODEL_CACHE_DIR        = var.model_cache_dir
         HF_HOME                = "${var.model_cache_dir}/huggingface"
         TORCH_HOME             = "${var.model_cache_dir}/torch"
-        # Warm replacement: whisper-listen (adapters.build_whisper_listen_host)
         WHISPER_MODEL_SIZE     = "base"
         STAGE_WSS_PATH         = var.wss_path
         STAGE_AUTH_TOKEN       = var.auth_token

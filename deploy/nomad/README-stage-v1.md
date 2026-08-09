@@ -1,17 +1,18 @@
-# stage.v1 Nomad packaging (Wave 6 / G6)
+# stage.v1 Nomad packaging (Wave 6 / G6 + immutable worker image)
 
 Declaration-only job specs for independent Listen / Translate / Speak /
-Prosody workers. **No automatic `nomad job run`.** Operators validate, then
-submit explicitly after preflight.
+Prosody workers plus a **private listen canary**. **No automatic
+`nomad job run`.** Operators validate, then submit explicitly after preflight.
 
 ## Files
 
-| Job file | Default `stage_id` | GPU | Health admission |
-|----------|--------------------|-----|------------------|
-| `sermon-translate-stage-listen.nomad.hcl` | `whisper-listen` | preferred | `/health/ready` |
-| `sermon-translate-stage-translate.nomad.hcl` | `opus-mt-en-es` | preferred | `/health/ready` |
-| `sermon-translate-stage-speak.nomad.hcl` | `edge-tts-es` | CPU default | `/health/ready` |
-| `sermon-translate-stage-prosody.nomad.hcl` | `baseline-prosody` | CPU | `/health/ready` |
+| Job file | Default `stage_id` | GPU | Health admission | Public edge |
+|----------|--------------------|-----|------------------|-------------|
+| `sermon-translate-stage-listen.nomad.hcl` | `whisper-listen` | preferred | `/health/ready` | no (fleet) |
+| `sermon-translate-stage-translate.nomad.hcl` | `opus-mt-en-es` | preferred | `/health/ready` | no (fleet) |
+| `sermon-translate-stage-speak.nomad.hcl` | `edge-tts-es` | CPU default | `/health/ready` | no (fleet) |
+| `sermon-translate-stage-prosody.nomad.hcl` | `baseline-prosody` | CPU | `/health/ready` | no (fleet) |
+| `sermon-translate-stage-canary.nomad.hcl` | `whisper-listen` | preferred (`gpu_mode=device`) | `/health/ready` | **PRIVATE only** |
 
 Also see orchestrator + legacy monolith in this directory.
 
@@ -29,35 +30,130 @@ stage.v1 workers expose:
 Service checks use **`/health/ready`** for admission and `/health/live` as a
 secondary liveness probe. Do not route traffic on `/healthz` alone.
 
-## Image + digest variables
+Live WebSocket path is **`/stage/v1/stream`** (not `/stage/v1/ws`).
+
+## Immutable stage-worker image
+
+Lean CPU-capable worker image (build context = `server/`):
+
+| Item | Value |
+|------|-------|
+| Dockerfile | `server/Dockerfile.stage-worker` |
+| Default registry | `997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker` |
+| Entrypoint | `python -m src.runtime.worker` (via `uv run --no-sync`) |
+| GPU variant | `server/Dockerfile.gpu` (CUDA; optional seamless extra) |
+
+### Build + pin digest
+
+```sh
+# From repo root — tags image with full git SHA, writes iidfile, prints pin values
+./deploy/scripts/build-stage-worker-image.sh
+
+# Push and resolve registry RepoDigest
+PUSH=1 ./deploy/scripts/build-stage-worker-image.sh
+
+# Manual equivalent:
+#   docker build -f server/Dockerfile.stage-worker \
+#     --iidfile /tmp/stage-worker.iid \
+#     -t "$REGISTRY:$(git rev-parse HEAD)" server/
+#   docker push "$REGISTRY:$(git rev-parse HEAD)"
+#   docker inspect --format='{{index .RepoDigests 0}}' "$REGISTRY:$(git rev-parse HEAD)"
+```
+
+Script env:
+
+| Env | Default / purpose |
+|-----|-------------------|
+| `REGISTRY` | ECR path above |
+| `TAG` | full `git rev-parse HEAD` |
+| `PUSH` | `0` — set `1` to push |
+| `UV_SYNC_EXTRA_ARGS` | optional extras (e.g. `--extra tts-pocket`) |
+
+Prefer Nomad `image` + `image_digest` (immutable) over floating tags.
+
+## Image + digest + auth variables
 
 Every stage job accepts:
 
 ```hcl
-variable "image"        { default = "sermon-translate-server:gpu" }
-variable "image_digest" { default = "" }  # e.g. "sha256:abc..."
+variable "image"          { /* registry path without digest */ }
+variable "image_digest"   { default = "" }  # e.g. "sha256:abc..."
+variable "auth_token"     { /* → STAGE_AUTH_TOKEN; pass via -var only */ }
+variable "wss_path"       { default = "/stage/v1/stream" }
+variable "stage_v1_mode"  { default = "dev" }   # canary defaults to "production"
+variable "trust_proxy"    { default = false }   # canary defaults to true
 ```
 
 When `image_digest` is non-empty the task image becomes
 `${image}@${image_digest}` for immutable deploys.
 
+**Never commit tokens.** Pass secrets only via CLI `-var` / `-var-file` that is
+gitignored, or the Nomad UI variable UI.
+
 ```sh
 nomad job validate \
-  -var="image=ghcr.io/example/sermon-translate-server" \
+  -var="image=997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker" \
   -var="image_digest=sha256:deadbeef..." \
+  -var="auth_token=${STAGE_AUTH_TOKEN}" \
+  -var="stage_v1_mode=production" \
+  -var="trust_proxy=true" \
   deploy/nomad/sermon-translate-stage-listen.nomad.hcl
 ```
 
-## Private WSS / auth placeholders
-
-Env (not yet enforced by worker code — placeholders for gateway wiring):
+## Auth / transport env (enforced by worker)
 
 | Env | Purpose |
 |-----|---------|
-| `STAGE_WSS_PATH` | Private path (default `/stage/v1/ws`) |
-| `STAGE_AUTH_TOKEN` | Bearer token (job var `auth_token`, sensitive) |
+| `STAGE_WSS_PATH` | Documented private path (default `/stage/v1/stream`) |
+| `STAGE_AUTH_TOKEN` | Bearer / `X-Stage-Auth` workload token (job var `auth_token`) |
+| `STAGE_V1_MODE` | `production` fail-closed; `dev`/`test` allow loopback |
+| `STAGE_TRUST_PROXY` | Honor `X-Forwarded-Proto` from trusted internal proxies |
+
+Production mode refuses to boot without a non-empty `STAGE_AUTH_TOKEN`.
 
 Job `meta.private_wss_path` mirrors the path for operators/discovery.
+
+## Private canary job
+
+`sermon-translate-stage-canary.nomad.hcl`:
+
+- Job: `sermon-translate-stage-canary`, **count=1**
+- Service: **`sermon-stage-canary-listen`** (Nomad provider only)
+- Stage: `whisper-listen` (one stage_id per worker process)
+- `meta.canary=true`, tags `canary` / `private` / `stage.v1`
+- **No** Traefik router tags, **no** Cloudflare public hostname
+- Default `stage_v1_mode=production`, `trust_proxy=true`, `gpu_mode=device`
+- Optional `-var=gpu_mode=cpu` if VRAM is contended; optional `-var=node_name=node-6`
+
+Validate / submit examples (**declaration path only — orchestrator deploys**):
+
+```sh
+# Validate (dummy token only for schema; production submit uses real secret from env)
+nomad job validate \
+  -var="image=997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker" \
+  -var="image_digest=sha256:REPLACE_AFTER_PUSH" \
+  -var="auth_token=${STAGE_AUTH_TOKEN:?set STAGE_AUTH_TOKEN in the environment}" \
+  -var="trust_proxy=true" \
+  deploy/nomad/sermon-translate-stage-canary.nomad.hcl
+
+# Operator submit AFTER preflight + image push (not CI):
+# NOMAD_ADDR=http://192.168.0.99:4646 deploy/scripts/preflight-gpu.sh node-6
+# nomad job run \
+#   -var="image=997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker" \
+#   -var="image_digest=sha256:..." \
+#   -var="auth_token=${STAGE_AUTH_TOKEN}" \
+#   -var="trust_proxy=true" \
+#   deploy/nomad/sermon-translate-stage-canary.nomad.hcl
+```
+
+CPU fallback canary:
+
+```sh
+nomad job validate \
+  -var="auth_token=${STAGE_AUTH_TOKEN}" \
+  -var="gpu_mode=cpu" \
+  deploy/nomad/sermon-translate-stage-canary.nomad.hcl
+```
 
 ## Warm model replacement notes (D6)
 
@@ -83,7 +179,8 @@ Defaults moved off passthrough stubs:
 # From repo root
 for f in deploy/nomad/sermon-translate-stage-*.nomad.hcl; do
   echo "== $f =="
-  nomad job validate "$f" || echo "nomad CLI missing or validate failed"
+  nomad job validate -var="auth_token=validate-only-not-a-secret" "$f" \
+    || echo "nomad CLI missing or validate failed"
 done
 ```
 
@@ -96,10 +193,11 @@ NOMAD_ADDR=http://192.168.0.99:4646 deploy/scripts/preflight-gpu.sh node-6
 ## Operator submit order (manual)
 
 1. Preflight GPU + MooseFS mount.
-2. Build/push image; record digest.
-3. `nomad job run -var=image_digest=sha256:... deploy/nomad/sermon-translate-stage-listen.nomad.hcl` (etc.).
-4. `bash deploy/scripts/resolve-stage-services.sh` → fill orchestrator `stage_remote_urls`.
-5. Submit orchestrator with `STAGE_RUNTIME=remote`.
+2. Build/push stage-worker image; record **registry** digest (`RepoDigests`).
+3. Submit canary first (private), confirm `/health/ready`.
+4. `nomad job run -var=image=... -var=image_digest=sha256:... -var=auth_token="$STAGE_AUTH_TOKEN" deploy/nomad/sermon-translate-stage-listen.nomad.hcl` (etc.).
+5. `bash deploy/scripts/resolve-stage-services.sh` → fill orchestrator `stage_remote_urls`.
+6. Submit orchestrator with `STAGE_RUNTIME=remote`.
 
 ## E2E evidence (not in git)
 

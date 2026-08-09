@@ -55,14 +55,31 @@ variable "visible_devices" {
 
 variable "auth_token" {
   type        = string
-  description = "Optional bearer token for private WSS (placeholder)."
+  description = "Workload bearer token injected as STAGE_AUTH_TOKEN. Pass via -var; never commit secrets."
   default     = ""
 }
 
 variable "wss_path" {
   type        = string
-  description = "Private WebSocket path placeholder for stage protocol."
-  default     = "/stage/v1/ws"
+  description = "Live stage.v1 WebSocket path (private)."
+  default     = "/stage/v1/stream"
+}
+
+variable "stage_v1_mode" {
+  type        = string
+  description = "STAGE_V1_MODE: production|dev|test."
+  default     = "dev"
+
+  validation {
+    condition     = contains(["production", "prod", "dev", "test"], var.stage_v1_mode)
+    error_message = "Stage v1 mode must be one of: production, prod, dev, or test."
+  }
+}
+
+variable "trust_proxy" {
+  type        = bool
+  description = "STAGE_TRUST_PROXY — honor X-Forwarded-Proto from trusted reverse proxies."
+  default     = false
 }
 
 locals {
@@ -183,6 +200,8 @@ job "sermon-translate-stage-translate" {
         TRANSLATE_MODEL_ID     = "Helsinki-NLP/opus-mt-en-es"
         STAGE_WSS_PATH         = var.wss_path
         STAGE_AUTH_TOKEN       = var.auth_token
+        STAGE_V1_MODE          = var.stage_v1_mode
+        STAGE_TRUST_PROXY      = var.trust_proxy ? "true" : "false"
       }
     }
   }
