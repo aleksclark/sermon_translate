@@ -27,8 +27,8 @@
   },
   "code": {
     "git_branch": "production-integration",
-    "git_sha": "ff674a0c39e6cc4d0baaa080f15bb9e55ad59737",
-    "note": "Recompute with git rev-parse HEAD before release pin; may advance if other workers commit first."
+    "git_sha": "bbd006a77c9730bce18094a0d1ed33729e97459f",
+    "note": "Implementation tip that was built into the image; packaging/finalization commits may advance HEAD after this pin."
   },
   "conformance_bundle": {
     "build_script": "deploy/stage-v1/build-conformance-bundle.sh",
@@ -149,11 +149,16 @@
     "rationale": "Local weights may lack a pinned content digest at boot; network voices are provider-managed. Promotion/release gates must fail closed when a required digest is unavailable rather than inventing one."
   },
   "image": {
-    "digest": null,
-    "note": "Placeholders for image worker — fill registry/repo/tag/digest after build/push. Nomad jobs accept image + image_digest vars.",
-    "registry": null,
-    "repository": null,
-    "tag": null
+    "built_from_git_sha": "bbd006a77c9730bce18094a0d1ed33729e97459f",
+    "digest": "sha256:819b5740218dfefecf658d7bc2f6bdb7be8f4bfae2ea922f2ec974fe2e0b0c1e",
+    "dockerfile": "server/Dockerfile.stage-worker",
+    "image_at_digest": "997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker@sha256:819b5740218dfefecf658d7bc2f6bdb7be8f4bfae2ea922f2ec974fe2e0b0c1e",
+    "image_ref": "997533895598.dkr.ecr.us-east-2.amazonaws.com/sermon-translate-stage-worker:bbd006a77c9730bce18094a0d1ed33729e97459f",
+    "local_image_id": "sha256:c95e9b0ec91970e0ce1ad7e02bb8ce26e39ebfa41af4284cb10d78f0f61e4299",
+    "note": "Real ECR push digest recorded by finalization orchestrator. Prefer image@digest for Nomad image_digest var.",
+    "registry": "997533895598.dkr.ecr.us-east-2.amazonaws.com",
+    "repository": "sermon-translate-stage-worker",
+    "tag": "bbd006a77c9730bce18094a0d1ed33729e97459f"
   },
   "implementation": {
     "adapters.py": {
@@ -264,6 +269,8 @@
   ],
   "nomad": {
     "admission_health_path": "/health/ready",
+    "canary_job": "sermon-translate-stage-canary",
+    "canary_service": "sermon-stage-canary-listen",
     "jobs": [
       {
         "bytes": 5496,
@@ -291,9 +298,9 @@
         "sha256": "fca8c8720743a12e526147aafcca067b35bd50397c1e4e554bd7414137427268"
       }
     ],
-    "note": "Declaration packaging only — do not nomad job run from integration automation.",
+    "note": "Canary job may be run by authorized operators with externally injected auth_token; automation still defaults to validate-only.",
     "readme": "deploy/nomad/README-stage-v1.md",
-    "validate_only": true
+    "validate_only": false
   },
   "protocol": {
     "bytes": 21972,

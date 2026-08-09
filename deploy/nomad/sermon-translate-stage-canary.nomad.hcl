@@ -36,8 +36,9 @@ variable "stage_id" {
 }
 
 variable "model_cache_dir" {
-  type    = string
-  default = "/models/sermon-translate/models"
+  type        = string
+  description = "Container path for model cache. Host moosefs mounts at /models, so /models/tmp/... maps to /mnt/moosefs/tmp/..."
+  default     = "/models/tmp/sermon-translate/models"
 }
 
 variable "gpu_count" {
