@@ -1,8 +1,8 @@
 """Real-model EN→ES E2E orchestration glue for stage.v1 Wave 4 / G4.
 
-TODO(lane-e-merge): prefer stage_v1.adapters warm host once Lane E lands.
-Until then this module loads whisper + opus-mt + edge-tts directly with
-explicit warm reuse (loader counters) and pre-EOS anti-cheat latches.
+Warm model hosts come from ``stage_v1.adapters`` factories (Lane E). Session
+stages bind via ``open_*_session_stage`` so weights load once and outlive runs.
+Legacy Counting* wrappers remain only as a fallback if adapters are unavailable.
 """
 
 from __future__ import annotations
@@ -232,18 +232,18 @@ def looks_like_english_not_spanish(text: str) -> bool:
     return hits >= max(2, len(tokens) // 3)
 
 
-async def _try_import_adapters() -> Any | None:
-    """Integration seam: prefer Lane E adapters when present."""
+def _try_import_adapters() -> Any | None:
+    """Return stage_v1.adapters via submodule import (avoid package __init__ cycle)."""
     try:
-        from src.stage_v1 import adapters as adapters  # type: ignore[attr-defined]
+        import importlib
 
-        return adapters
+        return importlib.import_module("src.stage_v1.adapters")
     except Exception:
         return None
 
 
 class CountingWhisperListen:
-    """Wraps WhisperListenStage and counts model loads."""
+    """Legacy fallback: wraps WhisperListenStage and counts model loads."""
 
     def __init__(self, *, sample_rate: int, counters: LoaderCounters, model_size: str) -> None:
         from src.pipelines.stages_listen.whisper import WhisperListenStage
@@ -332,41 +332,9 @@ async def create_warm_bundle(
     sample_rate: int = DEFAULT_SAMPLE_RATE,
     whisper_model_size: str | None = None,
 ) -> WarmStageBundle:
-    """Create and warm-start real stages. Prefer adapters if available."""
+    """Create and warm-start real stages via adapters factories when present."""
     counters = LoaderCounters()
     model_size = whisper_model_size or os.environ.get("WHISPER_MODEL_SIZE", "base")
-
-    adapters = await _try_import_adapters()
-    if adapters is not None and hasattr(adapters, "create_warm_bundle"):
-        # Lane E seam — adapters own load counting.
-        bundle = await adapters.create_warm_bundle(  # type: ignore[misc]
-            listen_id=listen_id,
-            translate_id=translate_id,
-            speak_id=speak_id,
-            sample_rate=sample_rate,
-            whisper_model_size=model_size,
-            counters=counters,
-        )
-        return bundle  # type: ignore[no-any-return]
-
-    if listen_id != "whisper-listen":
-        raise RealModelUnavailable(f"unsupported listen stage: {listen_id}")
-    if translate_id != "opus-mt-en-es":
-        raise RealModelUnavailable(f"unsupported translate stage: {translate_id}")
-    if speak_id not in {"edge-tts-es", "pocket-tts-spanish-24l"}:
-        raise RealModelUnavailable(f"unsupported speak stage: {speak_id}")
-
-    if speak_id == "pocket-tts-spanish-24l":
-        try:
-            import pocket_tts  # noqa: F401
-        except ImportError as exc:
-            raise RealModelUnavailable(
-                "pocket-tts not installed; use --speak edge-tts-es"
-            ) from exc
-        raise RealModelUnavailable(
-            "pocket-tts present but stage.v1 pocket adapter not wired in this lane; "
-            "use --speak edge-tts-es"
-        )
 
     # Fail-fast import checks for honest skip/block messages.
     try:
@@ -382,6 +350,130 @@ async def create_warm_bundle(
         import edge_tts  # noqa: F401
     except ImportError as exc:
         raise RealModelUnavailable("edge-tts not installed") from exc
+
+    adapters = _try_import_adapters()
+    if (
+        adapters is not None
+        and hasattr(adapters, "build_whisper_listen_host")
+        and hasattr(adapters, "open_whisper_session_stage")
+    ):
+        boot_id = str(uuid4())
+
+        if listen_id != "whisper-listen":
+            raise RealModelUnavailable(f"unsupported listen stage: {listen_id}")
+        if translate_id != "opus-mt-en-es":
+            raise RealModelUnavailable(f"unsupported translate stage: {translate_id}")
+        if speak_id not in {"edge-tts-es", "pocket-tts-spanish-24l"}:
+            raise RealModelUnavailable(f"unsupported speak stage: {speak_id}")
+
+        from src.pipelines.stages_listen.whisper import load_whisper_model
+        from src.pipelines.stages_speak.edge_tts import load_edge_tts_model
+        from src.pipelines.stages_translate.opus_mt import load_opus_mt_model
+
+        def whisper_loader() -> Any:
+            counters.whisper += 1
+            return load_whisper_model(model_size=model_size)
+
+        def opus_loader() -> Any:
+            counters.opus_mt += 1
+            return load_opus_mt_model()
+
+        def edge_loader() -> Any:
+            counters.edge_tts += 1
+            return load_edge_tts_model()
+
+        listen_host = adapters.build_whisper_listen_host(
+            model_size=model_size,
+            sample_rate=sample_rate,
+            max_sessions=4,
+            boot_id=boot_id,
+            model_loader=whisper_loader,
+        )
+        translate_host = adapters.build_opus_mt_host(
+            max_sessions=4,
+            boot_id=boot_id,
+            model_loader=opus_loader,
+        )
+
+        if speak_id == "edge-tts-es":
+            speak_host = adapters.build_edge_tts_host(
+                sample_rate=sample_rate,
+                max_sessions=4,
+                boot_id=boot_id,
+                model_loader=edge_loader,
+            )
+        else:
+            if not getattr(adapters, "POCKET_TTS_AVAILABLE", False):
+                raise RealModelUnavailable(
+                    "pocket-tts not installed; use --speak edge-tts-es"
+                )
+
+            def pocket_loader() -> Any:
+                counters.edge_tts += 1
+                from src.pipelines.stages_speak.pocket_tts import load_pocket_tts_model
+
+                return load_pocket_tts_model()
+
+            speak_host = adapters.build_pocket_tts_host(
+                sample_rate=sample_rate,
+                max_sessions=4,
+                boot_id=boot_id,
+                model_loader=pocket_loader,
+            )
+
+        await listen_host.warmup()
+        await translate_host.warmup()
+        await speak_host.warmup()
+
+        listen_session = await listen_host.open_session(attempt_id="e2e-listen")
+        translate_session = await translate_host.open_session(attempt_id="e2e-translate")
+        speak_session = await speak_host.open_session(attempt_id="e2e-speak")
+
+        listen = adapters.open_whisper_session_stage(
+            listen_host, listen_session, sample_rate=sample_rate
+        )
+        translate = adapters.open_opus_mt_session_stage(translate_host, translate_session)
+        if speak_id == "edge-tts-es":
+            speak = adapters.open_edge_tts_session_stage(
+                speak_host, speak_session, sample_rate=sample_rate
+            )
+        else:
+            speak = adapters.open_pocket_tts_session_stage(
+                speak_host, speak_session, sample_rate=sample_rate
+            )
+
+        await listen.start()
+        await translate.start()
+        await speak.start()
+
+        bundle = WarmStageBundle(
+            listen=listen,
+            translate=translate,
+            speak=speak,
+            counters=counters,
+            sample_rate=sample_rate,
+            listen_id=listen_id,
+            translate_id=translate_id,
+            speak_id=speak_id,
+            boot_id=boot_id,
+        )
+        # Attach host/session refs for orderly shutdown (not part of public dataclass).
+        bundle._hosts = (listen_host, translate_host, speak_host)  # type: ignore[attr-defined]
+        bundle._sessions = (listen_session, translate_session, speak_session)  # type: ignore[attr-defined]
+        return bundle
+
+    # Legacy fallback path (no adapters module).
+    if listen_id != "whisper-listen":
+        raise RealModelUnavailable(f"unsupported listen stage: {listen_id}")
+    if translate_id != "opus-mt-en-es":
+        raise RealModelUnavailable(f"unsupported translate stage: {translate_id}")
+    if speak_id not in {"edge-tts-es", "pocket-tts-spanish-24l"}:
+        raise RealModelUnavailable(f"unsupported speak stage: {speak_id}")
+
+    if speak_id == "pocket-tts-spanish-24l":
+        raise RealModelUnavailable(
+            "pocket-tts requires stage_v1.adapters; use --speak edge-tts-es"
+        )
 
     listen = CountingWhisperListen(
         sample_rate=sample_rate, counters=counters, model_size=model_size
@@ -406,6 +498,7 @@ async def create_warm_bundle(
 
 
 async def shutdown_bundle(bundle: WarmStageBundle) -> None:
+    """Stop session stages and close adapter hosts when present."""
     for stage in (bundle.speak, bundle.translate, bundle.listen):
         shutdown = getattr(stage, "shutdown", None)
         if shutdown is not None:
@@ -415,6 +508,28 @@ async def shutdown_bundle(bundle: WarmStageBundle) -> None:
             if stop is not None:
                 await stop()
 
+    sessions = getattr(bundle, "_sessions", None)
+    hosts = getattr(bundle, "_hosts", None)
+    if sessions is not None and hosts is not None:
+        for host, session in zip(hosts, sessions, strict=False):
+            close = getattr(host, "close_session", None)
+            if close is not None:
+                try:
+                    await close(session.session_state_id)
+                except Exception:
+                    logger.exception(
+                        "failed to close e2e session on %s",
+                        getattr(host, "stage_id", host),
+                    )
+            host_shutdown = getattr(host, "shutdown", None)
+            if host_shutdown is not None:
+                try:
+                    await host_shutdown()
+                except Exception:
+                    logger.exception(
+                        "failed to shutdown e2e host %s",
+                        getattr(host, "stage_id", host),
+                    )
 
 def chunk_pcm(pcm: bytes, *, sample_rate: int, frame_ms: int = FRAME_MS) -> list[bytes]:
     frame_bytes = int(sample_rate * frame_ms / 1000) * BYTES_PER_SAMPLE
