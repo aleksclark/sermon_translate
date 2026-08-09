@@ -27,9 +27,9 @@
   },
   "code": {
     "git_branch": "production-integration",
-    "git_sha": "74103b4e3dae9b79c1d9c366467b364dd4779106",
+    "git_sha": "ca9c90b11be92ef85adb49630e460274e2b221e0",
     "git_sha_image": "d6a43efc8c8684fafdddc85e64c9e70373b2a0f7",
-    "note": "Recompute with git rev-parse HEAD before release pin; may advance if other workers commit first."
+    "note": "code.git_sha is production-integration HEAD after CI listen-kyutai fix. Image content remains pinned at git_sha_image / image.digest (local preload of ECR digest)."
   },
   "conformance_bundle": {
     "build_script": "deploy/stage-v1/build-conformance-bundle.sh",
@@ -53,6 +53,10 @@
     "health_ready": "PASS",
     "image_mode": "local_preload_of_ecr_digest",
     "mode": "production",
+    "model_content_pins": {
+      "opus-mt-en-es": "4c0e7b6951db7f17ed7f323075823d72dacb924a9d12e1c762f07e043e53c0a2",
+      "whisper-listen": "135070a552558808b6125beb5fe824634cb52f33c18fdb9eb7f53f5fc59f9514"
+    },
     "node": "node-6",
     "node_id": "e5662c93",
     "private": true,
@@ -150,7 +154,7 @@
       "schema/index.json": "1956d32742321a91409dc1af40788226f26e8789f92ce4312b56764c4cfc4c2d"
     }
   },
-  "generated_at": "2026-08-09T05:16:20Z",
+  "generated_at": "2026-08-09T06:22:18Z",
   "health": {
     "admission_rule": "Service checks must use /health/ready; never admit on /healthz alone",
     "live": "/health/live",
@@ -159,12 +163,20 @@
     "startup": "/health/startup"
   },
   "honest_artifact_digest_policy": {
+    "canary_content_pin": {
+      "edge-tts-es": "provider_managed:edge-tts:es-ES-AlvaroNeural",
+      "generated_at": "2026-08-09T06:20:42Z",
+      "opus-mt-en-es": "4c0e7b6951db7f17ed7f323075823d72dacb924a9d12e1c762f07e043e53c0a2",
+      "source": "Checksums of exact HF hub cache trees under canary model_cache_dir (/mnt/moosefs/tmp/sermon-translate/models) when present; else local HF cache.",
+      "whisper-listen": "135070a552558808b6125beb5fe824634cb52f33c18fdb9eb7f53f5fc59f9514"
+    },
     "model_artifact_digest_may_be": [
       "unavailable",
-      "provider_managed:<provider>:<revision>"
+      "provider_managed:<provider>:<revision>",
+      "content_tree_sha256:<hex> (sha256_over_sorted_path_bytes_file_sha256_lines)"
     ],
     "promotion_blocked_if_unavailable": true,
-    "rationale": "Local weights may lack a pinned content digest at boot; network voices are provider-managed. Promotion/release gates must fail closed when a required digest is unavailable rather than inventing one."
+    "rationale": "Prefer content_tree digests when HF hub cache trees are accessible on the canary model_cache_dir. Network voices remain provider_managed. When a required digest is still unavailable, promotion/release gates must fail closed rather than inventing one."
   },
   "image": {
     "built_from_git_sha": "d6a43efc8c8684fafdddc85e64c9e70373b2a0f7",
@@ -230,11 +242,19 @@
     {
       "adapter": "build_whisper_listen_host",
       "availability": "required",
-      "model_artifact_digest": "unavailable",
-      "model_artifact_status": "unavailable",
+      "content_manifest_path": "/home/aleks/work/reviews/live-translation/implementation-runs/model-artifacts/whisper-base.content-manifest.json",
+      "model_artifact_digest": "135070a552558808b6125beb5fe824634cb52f33c18fdb9eb7f53f5fc59f9514",
+      "model_artifact_digest_method": "sha256_over_sorted_path_bytes_file_sha256_lines",
+      "model_artifact_status": "content_pinned",
+      "model_cache_root_canary": "/mnt/moosefs/tmp/sermon-translate/models/huggingface/hub/models--Systran--faster-whisper-base",
+      "model_file_count": 9,
+      "model_hf_id": "Systran/faster-whisper-base",
       "model_revision_default": "base",
       "model_revision_env": "WHISPER_MODEL_SIZE",
-      "promotion_blocked_if_unavailable": true,
+      "model_revision_ref": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+      "model_total_bytes": 295765922,
+      "note": "Content tree digest over HF hub cache (path|bytes|file_sha256 lines). Computed from canary model_cache_dir on MooseFS tmp; full per-file manifest outside git under implementation-runs/model-artifacts/.",
+      "promotion_blocked_if_unavailable": false,
       "provider": "faster-whisper",
       "session_binder": "open_whisper_session_stage",
       "stage_id": "whisper-listen",
@@ -243,11 +263,19 @@
     {
       "adapter": "build_opus_mt_host",
       "availability": "required",
-      "model_artifact_digest": "unavailable",
-      "model_artifact_status": "unavailable",
+      "content_manifest_path": "/home/aleks/work/reviews/live-translation/implementation-runs/model-artifacts/opus-mt-en-es.content-manifest.json",
+      "model_artifact_digest": "4c0e7b6951db7f17ed7f323075823d72dacb924a9d12e1c762f07e043e53c0a2",
+      "model_artifact_digest_method": "sha256_over_sorted_path_bytes_file_sha256_lines",
+      "model_artifact_status": "content_pinned",
+      "model_cache_root_canary": "/mnt/moosefs/tmp/sermon-translate/models/huggingface/hub/models--Helsinki-NLP--opus-mt-en-es",
+      "model_file_count": 25,
+      "model_hf_id": "Helsinki-NLP/opus-mt-en-es",
       "model_id_default": "Helsinki-NLP/opus-mt-en-es",
       "model_revision_env": "TRANSLATE_MODEL_ID",
-      "promotion_blocked_if_unavailable": true,
+      "model_revision_ref": "5bc4493d463cf000c1f0b50f8d56886a392ed4ab",
+      "model_total_bytes": 1875672818,
+      "note": "Content tree digest over HF hub cache (path|bytes|file_sha256 lines). Computed from canary model_cache_dir on MooseFS tmp; full per-file manifest outside git under implementation-runs/model-artifacts/.",
+      "promotion_blocked_if_unavailable": false,
       "provider": "helsinki-nlp",
       "session_binder": "open_opus_mt_session_stage",
       "stage_id": "opus-mt-en-es",
