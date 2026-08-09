@@ -4,6 +4,18 @@ Declaration-only job specs for independent Listen / Translate / Speak /
 Prosody workers plus a **private listen canary**. **No automatic
 `nomad job run`.** Operators validate, then submit explicitly after preflight.
 
+## Integration manifest + conformance bundle
+
+Machine-readable pin for this branch lives at:
+
+- `deploy/stage-v1/integration-manifest.json` — code digests, auth/TLS contract,
+  health/stream paths, model identities, Nomad job paths, image placeholders
+- `deploy/stage-v1/conformance-bundle/` — portable JSON Schema + golden fixtures
+- `deploy/stage-v1/build-conformance-bundle.sh` — regenerate bundle + checksums
+
+Consumers (canonical sermon-translate peers) should pin against the integration
+manifest `code.git_sha` and `conformance_bundle.bundle_manifest.sha256`.
+
 ## Files
 
 | Job file | Default `stage_id` | GPU | Health admission | Public edge |

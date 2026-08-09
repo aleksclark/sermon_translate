@@ -1,0 +1,318 @@
+{
+  "auth_tls_contract": {
+    "auth_on_upgrade_only": true,
+    "auth_token_env": "STAGE_AUTH_TOKEN",
+    "auth_token_transport": [
+      "Authorization: Bearer <token>",
+      "X-Stage-Auth: <token>"
+    ],
+    "credentials_forbidden_in_hello": true,
+    "credentials_forbidden_in_url": true,
+    "empty_token_boot_error": "STAGE_V1_MODE=production requires non-empty STAGE_AUTH_TOKEN (fail-closed: refuse to start without workload credentials)",
+    "empty_token_fails_boot": true,
+    "notes": [
+      "authorize_stage_upgrade runs before accept/open_session/model bind",
+      "dev/test may allow loopback credential-free upgrades",
+      "Auth failure sends AUTHENTICATION_FAILED then close; no open_session"
+    ],
+    "production_mode_env": "STAGE_V1_MODE=production",
+    "requires_wss_or_tls": true,
+    "subprotocol": "stage.v1",
+    "trust_proxy_accepted_values": [
+      "https",
+      "wss"
+    ],
+    "trust_proxy_env": "STAGE_TRUST_PROXY=1",
+    "trust_proxy_header": "X-Forwarded-Proto"
+  },
+  "code": {
+    "git_branch": "production-integration",
+    "git_sha": "ff674a0c39e6cc4d0baaa080f15bb9e55ad59737",
+    "note": "Recompute with git rev-parse HEAD before release pin; may advance if other workers commit first."
+  },
+  "conformance_bundle": {
+    "build_script": "deploy/stage-v1/build-conformance-bundle.sh",
+    "bundle_manifest": {
+      "bytes": 11268,
+      "path": "deploy/stage-v1/conformance-bundle/bundle-manifest.json",
+      "sha256": "23ad470646da2588290801bc5fc14e6a388e2b1104cee3951b6631f50c763ecb"
+    },
+    "bundle_manifest_sha256": "23ad470646da2588290801bc5fc14e6a388e2b1104cee3951b6631f50c763ecb",
+    "file_count": 68,
+    "path": "deploy/stage-v1/conformance-bundle/"
+  },
+  "fixtures": {
+    "audio": {
+      "files": {
+        "public-domain-en-01.pcm": "77c50b880dc9071813c9ac1e6b8b1073297a404196dee94b0d17714d4a58e8f5",
+        "public-domain-en-01.wav": "aeaf08f19ad9a1226ef094e1362b45e8e0104c57bd1cb714d734a8b92ee68422",
+        "public-domain-en-02.pcm": "5693905a2f736a5170d9ea58b07ede4f2cedad6c9ac0b926b8ab0e9cb2ebb549",
+        "public-domain-en-02.wav": "fd41072172fb0c582cb839f5d3ddfe6c5b836c64ab4c0faa0a3607999b4a806d",
+        "public-domain-en-03.pcm": "1625407423fff2569dee325cad97b06bfff9cf6fffda19ac68d56246b566a261",
+        "public-domain-en-03.wav": "f2732ef1ce3173fde2478338f8c8863ccc3d497683c5dd2fb12d2dcc47273403",
+        "silence-1s-16k.pcm": "0c92bddb4e96f3ea9ec9f0f64a668255a6c15527ac09f6f119cafde60c7c4a39",
+        "silence-1s-16k.wav": "0d1facd99af6b4e49919b5647a43bfa62fdcb4c145c27cb803ad7bb3ad06cc8e",
+        "tone-440hz-500ms-16k.pcm": "6013dfb0e5acc4b69ca4af35feb2565c7fbead2c22a2dda2198a61f31b94c7f6",
+        "tone-440hz-500ms-16k.wav": "09a0b8b3fcd62af18e69af5f88f8dea0e1fe6867893b8d2c853123c14475a730"
+      },
+      "manifest": {
+        "bytes": 2897,
+        "path": "server/tests/fixtures/audio/MANIFEST.sha256.json",
+        "sha256": "29e75aa10ffed75535a83db857655318110bb6a85c2fa14c80e11954f7fa61af"
+      },
+      "root": "server/tests/fixtures/audio/",
+      "sample_format": {
+        "channels": 1,
+        "codec": "pcm_s16le",
+        "sample_rate_hz": 16000
+      }
+    },
+    "binary": {
+      "binary/listen_audio_frame.meta.json": "67b39067307d4981ac2338dfbc74d9c58d1fad8a183688130ed5739f81c596a0",
+      "binary/listen_audio_frame.stg1": "32d54a2f1a47ca4faf9873b59231eb0b8f25d3563a83fe6e77ad9e5e75a93cb2",
+      "binary/listen_audio_frame_seq1.meta.json": "3e43c5ecf59c4fffa426478b1d836e10b97759c256551144eb7f0a6683ef5287",
+      "binary/listen_audio_frame_seq1.stg1": "5e7909cc6f74d17f3e69fad7155994d672831922c7862c6430a1520fa0b03bfa"
+    },
+    "json": {
+      "json/error_version_unsupported.json": "6885d693cd7f777eb282a8d878a196655a6477f1ad3d3f1e8098cd01dca816b3",
+      "json/hello.json": "b65675ed9ece5d2af4c1f0a362b6349daa84f65fc74c93b55dfd83c63cecde35",
+      "json/hello_with_additive_field.json": "3ad840b3a54f0f2aa323cbcf21ea7d4726a676dee82dfac59a588b905c548b12",
+      "json/listen_product.json": "a1f69739a1bf660b11ecbee5c7680b41bcb43cfbd5aabccfed81caf67773e221",
+      "json/provenance.json": "d4df83959fef1d3260858bbdffc88bcddd2215c56d87c691963e5f294995ec22"
+    },
+    "manifest": {
+      "bytes": 6148,
+      "path": "server/tests/fixtures/stage_v1/MANIFEST.sha256.json",
+      "sha256": "bfd384c4f38687139e30dff24b08666459eb3c89ea1aeef943014622f5da29f8"
+    },
+    "root": "server/tests/fixtures/stage_v1/",
+    "schema": {
+      "schema/AcceptedPayload.json": "9142b41da7e783854cef31053841fee53e515b640a6db353dca16b1e033887c8",
+      "schema/AckPayload.json": "b46fdc20627e87b5035da91fa7bc1d7164caec84bd4e2675c667a3abb3e4095b",
+      "schema/BinaryAudioPayload.json": "cdedcfa66a6385d91b24382691f7bca61a2c29b89c436601f71f15e94af8f6ba",
+      "schema/CancelPayload.json": "b572ff87f5328a597be11984d69061bb8548613d2797295136999f0537db3036",
+      "schema/CancelledPayload.json": "533af5b94b3e4f78437a848401ab020371881dc5497f1c5c55f71164724f2a71",
+      "schema/DrainingPayload.json": "bcb608d190d13004783b62d23ef6166f5012b09fd54e55e1f66bfd451b94fa41",
+      "schema/DroppedPayload.json": "65bf2ee7bf9acefc82f32f42ea717424daabe995d9bf4249dd789c1cd700c881",
+      "schema/EosPayload.json": "624914576215cdedfe06c0286ee3f7b4d7744956d15876fca823217765600128",
+      "schema/ErrorPayload.json": "4eb3be715b6395ad7f257fd65b3a8b092a28137e62983bcc801c9c5c554178d4",
+      "schema/EventEnvelope.json": "af866f91e6ef2161eea0547d7cb5dbddc4eee280c42004e0e6aec5f5ddea3a7b",
+      "schema/GapPayload.json": "6997ac26a6e5fc028f3e8a4861567aedc171bb0c0cb67cb98b27c57c76f42619",
+      "schema/HealthPayload.json": "f76c36944a83b48decb157816efcb7cc041fdef6da4e88412ff74c25708adafa",
+      "schema/HelloPayload.json": "7af3d756d80eb000ca3048365eb50c8eabb5d665072cb8b665de71f289cdb2ad",
+      "schema/ListenProductPayload.json": "782d9b086ba4a3705b405adf5cff6af6095278664de32a7c8172148bf4e5e221",
+      "schema/OpenPayload.json": "b94b121a748d1166e856f986f93e468747d71a9ffcb04456ae134b88a6ccf479",
+      "schema/OpenedPayload.json": "5a35ad96ab069b285d25896a435567f256911aa9252c1e1750f902530dc5b103",
+      "schema/SpeakCompletePayload.json": "abcfdfcbf8abcfc9ec5fedf22cb0e62ea73dc764115c422ba0757ece8b65d4b3",
+      "schema/SpeakRequestPayload.json": "7d633fec4b141105f55846a85c3d4df30189d1031d63759afad346805ae2afb5",
+      "schema/TranslateProductPayload.json": "6e3e4125c268905b53c6a3ed3e9f56f59c9a911367601197f0d1bd401cb13041",
+      "schema/TranslateRequestPayload.json": "603b71dc7a724c70449a15020a5733c7534179fa67063aa7bdbcfdbdf20236a2",
+      "schema/WindowPayload.json": "a01c4a200137530d456ca3f6edfc012e56bedae8048a144846047b191c5aeb79",
+      "schema/event_type.accepted.json": "608744046cabbb39b567adab0394c67d77a22969a181ea7abe65cf0e50c11024",
+      "schema/event_type.ack.json": "f6b893aa697246460ca41a677cdb1f6929a20d1fd7ad4a2f6e284a4b30a9b5fd",
+      "schema/event_type.cancel.json": "b30f7d30b9bf5a4101f7e5ab89caddc6dac10882d96c8b83c1d2f8501ec978d8",
+      "schema/event_type.cancelled.json": "c566b850f9efa1d76c01dbfa8fb4984dfc33618c7c0619f5c29f9a0aea3c6861",
+      "schema/event_type.draining.json": "68888da65d7126590c2db73f8fd0535704a88bcfaf11ba074785e273e2d2c75d",
+      "schema/event_type.dropped.json": "7722ef739efe29b3588e0be8b7b11a1fd3278a02329cc3718ca4c72a12999f0f",
+      "schema/event_type.eos.json": "6ad81dc372d73709f3704291d8d3b40aebb5d6e996840454b96d4153faebacfb",
+      "schema/event_type.error.json": "ba85a946234116b92569685314267b8acb50f4b11b9f717674bdf598c6cdae07",
+      "schema/event_type.gap.json": "0488e48938a91e959f27f1190efe87e30541290eb7b0786dab934cd0ec5fae3f",
+      "schema/event_type.health.json": "e2e2e7761fc9f2a051df1761817f5f945fc78a2fe7c57feca01ea83d27a3d95b",
+      "schema/event_type.hello.json": "2262f136bd9f04c6bde0c2ec6d280f7ea993c6244b500fe2d00b77b2efd882a8",
+      "schema/event_type.listen.audio.json": "bf106d2d75bb5697c8c1910972c297f5c1ba106c776b94de7d275576e1ffe93d",
+      "schema/event_type.listen.product.json": "417c94d7abe56326c4edce547e90bfb9781435798b909a274236a59629b2165e",
+      "schema/event_type.open.json": "e6430344a5a5998db05871bfc8fcdfb98f99b013d52f3ece3616284eb681ea64",
+      "schema/event_type.opened.json": "d9bb85f00e2d825f62f9398ac7c8a1e1747a656dab6f8b17c2408956aca90cf9",
+      "schema/event_type.speak.audio.json": "1e000e66fc79a4b479002031dbf9e6134ac3893c74e068dd591d4808db6f3a46",
+      "schema/event_type.speak.complete.json": "24458a4b209bec7c7601a044921c7a5c4eb5485430780d1869040ba91b0a50a2",
+      "schema/event_type.speak.request.json": "eaf85c668196c8730d6c6d61530b7cd7e64d71ad09833123f99c57a511cf98d9",
+      "schema/event_type.translate.product.json": "1cbd32b4abcb7a5ef9d457252989a3d61c2d71a3abc4bbdcfa622f189a8feeb3",
+      "schema/event_type.translate.request.json": "fcfc67e9c8c1b809bb0f141e2097d6b54e7659e9bcc889a2194c73ddc07e427d",
+      "schema/event_type.window.json": "edb9ff9588480c042df69fe9a621953aacc0efa01988ce1a6cd0d984a86225c2",
+      "schema/index.json": "1956d32742321a91409dc1af40788226f26e8789f92ce4312b56764c4cfc4c2d"
+    }
+  },
+  "generated_at": "2026-08-09T04:18:27Z",
+  "health": {
+    "admission_rule": "Service checks must use /health/ready; never admit on /healthz alone",
+    "live": "/health/live",
+    "liveness_alias_only": "/healthz",
+    "ready_admission": "/health/ready",
+    "startup": "/health/startup"
+  },
+  "honest_artifact_digest_policy": {
+    "model_artifact_digest_may_be": [
+      "unavailable",
+      "provider_managed:<provider>:<revision>"
+    ],
+    "promotion_blocked_if_unavailable": true,
+    "rationale": "Local weights may lack a pinned content digest at boot; network voices are provider-managed. Promotion/release gates must fail closed when a required digest is unavailable rather than inventing one."
+  },
+  "image": {
+    "digest": null,
+    "note": "Placeholders for image worker — fill registry/repo/tag/digest after build/push. Nomad jobs accept image + image_digest vars.",
+    "registry": null,
+    "repository": null,
+    "tag": null
+  },
+  "implementation": {
+    "adapters.py": {
+      "bytes": 17551,
+      "path": "server/src/stage_v1/adapters.py",
+      "sha256": "a712535bb2d256bddd6e8460bcd93bacde6b7c45a3eaa64d952f59e0bd8f3398"
+    },
+    "auth.py": {
+      "bytes": 8829,
+      "path": "server/src/stage_v1/auth.py",
+      "sha256": "d996b322979d6b5bb27259edddebc63d15b4fdbe7cc205dd81eba2dbcd3c760a"
+    },
+    "framing.py": {
+      "bytes": 7691,
+      "path": "server/src/stage_v1/framing.py",
+      "sha256": "9559c241d42f15ed68fa543db3ba2dc91589ca570f969ac6c6562501ce9234b6"
+    },
+    "health.py": {
+      "bytes": 3122,
+      "path": "server/src/stage_v1/health.py",
+      "sha256": "a592a0d0f4ea717405dd02aea33ff70649bb823b1f40257a8be03c8be80db9a8"
+    },
+    "host.py": {
+      "bytes": 18534,
+      "path": "server/src/stage_v1/host.py",
+      "sha256": "247761081af06aabe5f11b5e480c1eb09a2d2568a9e3721c0d4409a15e92265e"
+    },
+    "models.py": {
+      "bytes": 17072,
+      "path": "server/src/stage_v1/models.py",
+      "sha256": "2307c1a0cc1cd1ae1f0c32300490a7c7c5c298ade29bc48cc2c4c74d7f26ce74"
+    },
+    "provenance.py": {
+      "bytes": 993,
+      "path": "server/src/stage_v1/provenance.py",
+      "sha256": "774aa3961ffae0a6a592fc229a4e6ad7a898ac4bfac45150d6a64ff05b17bae9"
+    },
+    "schema_gen.py": {
+      "bytes": 2721,
+      "path": "server/src/stage_v1/schema_gen.py",
+      "sha256": "7fe8b84f3ccd5bb2ba7aae93b6cbb2b3b213f19deaa78bfde90ec202ed7e5701"
+    },
+    "server.py": {
+      "bytes": 38027,
+      "path": "server/src/stage_v1/server.py",
+      "sha256": "c26a6e7497625d9deb5bd7aae3438dd9dd0c4168a8801df8d3ee57783c93bfe2"
+    }
+  },
+  "kind": "integration-manifest",
+  "model_identities": [
+    {
+      "adapter": "build_whisper_listen_host",
+      "availability": "required",
+      "model_artifact_digest": "unavailable",
+      "model_artifact_status": "unavailable",
+      "model_revision_default": "base",
+      "model_revision_env": "WHISPER_MODEL_SIZE",
+      "promotion_blocked_if_unavailable": true,
+      "provider": "faster-whisper",
+      "session_binder": "open_whisper_session_stage",
+      "stage_id": "whisper-listen",
+      "stage_kind": "listen"
+    },
+    {
+      "adapter": "build_opus_mt_host",
+      "availability": "required",
+      "model_artifact_digest": "unavailable",
+      "model_artifact_status": "unavailable",
+      "model_id_default": "Helsinki-NLP/opus-mt-en-es",
+      "model_revision_env": "TRANSLATE_MODEL_ID",
+      "promotion_blocked_if_unavailable": true,
+      "provider": "helsinki-nlp",
+      "session_binder": "open_opus_mt_session_stage",
+      "stage_id": "opus-mt-en-es",
+      "stage_kind": "translate"
+    },
+    {
+      "adapter": "build_edge_tts_host",
+      "availability": "required",
+      "model_artifact_digest": "provider_managed:edge-tts:es-ES-AlvaroNeural",
+      "model_artifact_status": "provider_managed",
+      "model_revision": "edge-tts:es-ES-AlvaroNeural",
+      "note": "Network voice; no resident weights. Digest is provider-managed revision tag, not a content hash.",
+      "promotion_blocked_if_unavailable": true,
+      "provider": "edge-tts",
+      "session_binder": "open_edge_tts_session_stage",
+      "stage_id": "edge-tts-es",
+      "stage_kind": "speak",
+      "streams_pcm": false,
+      "voice": "es-ES-AlvaroNeural"
+    },
+    {
+      "adapter": "build_pocket_tts_host",
+      "availability": "conditional",
+      "detect": "import pocket_tts",
+      "install": "uv sync --extra tts-pocket",
+      "model_artifact_digest": "unavailable",
+      "model_artifact_status": "unavailable",
+      "model_revision_default": "pocket-tts:spanish_24l:lola",
+      "note": "CONDITIONAL PROCEED with edge-tts when pocket-tts is absent; do not fake pocket.",
+      "promotion_blocked_if_unavailable": true,
+      "provider": "pocket-tts",
+      "session_binder": "open_pocket_tts_session_stage",
+      "stage_id": "pocket-tts-spanish-24l",
+      "stage_kind": "speak",
+      "unavailable_if_not_installed": true
+    }
+  ],
+  "nomad": {
+    "admission_health_path": "/health/ready",
+    "jobs": [
+      {
+        "bytes": 5496,
+        "path": "deploy/nomad/sermon-translate-stage-listen.nomad.hcl",
+        "sha256": "bd42e121cd560cfff71eb8a7461df083c6a6396af4e7ff93cc9a9a914a99240f"
+      },
+      {
+        "bytes": 5187,
+        "path": "deploy/nomad/sermon-translate-stage-translate.nomad.hcl",
+        "sha256": "97c1d92d1ed08d4e5f352444144309ff89500234c6e1abd53f9e9eaef800756d"
+      },
+      {
+        "bytes": 5409,
+        "path": "deploy/nomad/sermon-translate-stage-speak.nomad.hcl",
+        "sha256": "19afb9c6a543126647c575163130d3234ef7dedea8db10c3e7ff19c27752734a"
+      },
+      {
+        "bytes": 3547,
+        "path": "deploy/nomad/sermon-translate-stage-prosody.nomad.hcl",
+        "sha256": "94f269c2623773b79fb3b2120520bbc77901f8da10b4b0e8b935f80699c43aef"
+      },
+      {
+        "bytes": 7224,
+        "path": "deploy/nomad/sermon-translate-stage-canary.nomad.hcl",
+        "sha256": "fca8c8720743a12e526147aafcca067b35bd50397c1e4e554bd7414137427268"
+      }
+    ],
+    "note": "Declaration packaging only — do not nomad job run from integration automation.",
+    "readme": "deploy/nomad/README-stage-v1.md",
+    "validate_only": true
+  },
+  "protocol": {
+    "bytes": 21972,
+    "path": "docs/protocol/stage-v1.md",
+    "sha256": "938da88a74916707119e1d62c9a4fdfd1b42c1e3a40c7dcc2ad6aa11094e91eb",
+    "title": "stage.v1 wire protocol"
+  },
+  "pydantic_models": {
+    "bytes": 17072,
+    "path": "server/src/stage_v1/models.py",
+    "sha256": "2307c1a0cc1cd1ae1f0c32300490a7c7c5c298ade29bc48cc2c4c74d7f26ce74"
+  },
+  "schema_version": "stage.v1",
+  "stream": {
+    "binary_framing": "STG1",
+    "legacy_compat_path": "/ws",
+    "legacy_note": "WorkerMessage JSON+base64 compat only; prefer /stage/v1/stream",
+    "method": "GET",
+    "path": "/stage/v1/stream",
+    "subprotocol": "stage.v1"
+  }
+}
