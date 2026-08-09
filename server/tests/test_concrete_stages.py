@@ -52,12 +52,13 @@ async def test_whisper_listen_protocol_with_mock(monkeypatch: pytest.MonkeyPatch
         *,
         sequence: int,
         start_ms: float,
+        is_final: bool = True,
     ) -> ListenProduct:
         return ListenProduct(
             sequence=sequence,
             utterance_id=f"w-{sequence}",
             text="hello",
-            is_final=True,
+            is_final=is_final,
             words=[WordSpan(text="hello", start_ms=start_ms, end_ms=start_ms + 100)],
         )
 

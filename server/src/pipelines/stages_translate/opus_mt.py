@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
@@ -21,8 +22,42 @@ from src.pipelines.spanish import TRANSLATION_MODEL_ID, SpanishTranslationPipeli
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class OpusMTLoadedModel:
+    """Immutable resident Opus-MT translator + sentencepiece processors (D6)."""
+
+    translator: Any
+    sp_source: Any
+    sp_target: Any
+    model_id: str
+    revision: str = "unknown"
+
+
+def load_opus_mt_model(
+    *,
+    model_id: str | None = None,
+    cache: Any = None,
+) -> OpusMTLoadedModel:
+    """Load Helsinki-NLP Opus-MT EN→ES once (sync). Used by StageHost model_loader."""
+    mid = model_id or os.environ.get("TRANSLATE_MODEL_ID", TRANSLATION_MODEL_ID)
+    if cache is not None:
+        os.environ.setdefault("MODEL_CACHE_DIR", str(cache.root))
+    helper = SpanishTranslationPipeline()
+    translator, sp_source, sp_target = helper._load_translation()
+    return OpusMTLoadedModel(
+        translator=translator,
+        sp_source=sp_source,
+        sp_target=sp_target,
+        model_id=mid,
+        revision=mid,
+    )
+
+
 class OpusMTTranslateStage:
-    """Incremental EN→ES translation via Helsinki-NLP Opus-MT."""
+    """Incremental EN→ES translation via Helsinki-NLP Opus-MT.
+
+    Weights may be injected via ``loaded_model`` so ``stop()`` never unloads them.
+    """
 
     def __init__(
         self,
@@ -30,14 +65,15 @@ class OpusMTTranslateStage:
         sample_rate: int = 48000,
         model_id: str | None = None,
         cache: Any = None,
+        loaded_model: OpusMTLoadedModel | None = None,
         **_: object,
     ) -> None:
         self._sample_rate = sample_rate
         self._model_id = model_id or os.environ.get("TRANSLATE_MODEL_ID", TRANSLATION_MODEL_ID)
         self._cache = cache
-        self._translator: Any = None
-        self._sp_source: Any = None
-        self._sp_target: Any = None
+        self._loaded: OpusMTLoadedModel | None = loaded_model
+        self._owns_model = loaded_model is None
+        self._session_active = False
         self.info = StageInfo(
             id="opus-mt-en-es",
             kind=StageKind.TRANSLATE,
@@ -47,22 +83,82 @@ class OpusMTTranslateStage:
             default_for_kind=True,
         )
 
+    @property
+    def loaded_model(self) -> OpusMTLoadedModel | None:
+        return self._loaded
+
+    # Compatibility attributes used by older tests / call sites.
+    @property
+    def _translator(self) -> Any | None:
+        return None if self._loaded is None else self._loaded.translator
+
+    @_translator.setter
+    def _translator(self, value: Any | None) -> None:
+        self._set_component("translator", value)
+
+    @property
+    def _sp_source(self) -> Any | None:
+        return None if self._loaded is None else self._loaded.sp_source
+
+    @_sp_source.setter
+    def _sp_source(self, value: Any | None) -> None:
+        self._set_component("sp_source", value)
+
+    @property
+    def _sp_target(self) -> Any | None:
+        return None if self._loaded is None else self._loaded.sp_target
+
+    @_sp_target.setter
+    def _sp_target(self, value: Any | None) -> None:
+        self._set_component("sp_target", value)
+
+    def _set_component(self, name: str, value: Any | None) -> None:
+        if value is None:
+            if self._owns_model and name == "translator":
+                self._loaded = None
+            return
+        if self._loaded is None:
+            self._loaded = OpusMTLoadedModel(
+                translator=value if name == "translator" else object(),
+                sp_source=value if name == "sp_source" else object(),
+                sp_target=value if name == "sp_target" else object(),
+                model_id=self._model_id,
+                revision=self._model_id,
+            )
+            return
+        if not self._owns_model:
+            return
+        data = {
+            "translator": self._loaded.translator,
+            "sp_source": self._loaded.sp_source,
+            "sp_target": self._loaded.sp_target,
+            "model_id": self._loaded.model_id,
+            "revision": self._loaded.revision,
+        }
+        data[name] = value
+        self._loaded = OpusMTLoadedModel(**data)
+
     async def start(self) -> None:
-        if self._translator is not None:
+        """Ensure weights are available; open per-session runtime."""
+        self._session_active = True
+        if self._loaded is not None:
             return
         if self._cache is not None:
             os.environ.setdefault("MODEL_CACHE_DIR", str(self._cache.root))
         loop = asyncio.get_running_loop()
-        helper = SpanishTranslationPipeline()
-        self._translator, self._sp_source, self._sp_target = await loop.run_in_executor(
-            None, helper._load_translation
+        loaded = await loop.run_in_executor(
+            None,
+            partial(load_opus_mt_model, model_id=self._model_id, cache=self._cache),
         )
-        logger.info("opus-mt-en-es model loaded: %s", self._model_id)
+        self._loaded = loaded
+        self._owns_model = True
+        logger.info("opus-mt-en-es model loaded: %s", loaded.model_id)
 
     async def stop(self) -> None:
-        self._translator = None
-        self._sp_source = None
-        self._sp_target = None
+        """Clear per-session state. Never unloads preloaded weights."""
+        self._session_active = False
+        if self._owns_model:
+            self._loaded = None
 
     async def translate(
         self,
@@ -70,11 +166,9 @@ class OpusMTTranslateStage:
         *,
         prosody: AsyncIterator[MetadataEnvelope] | None = None,
     ) -> AsyncIterator[TranslateProduct]:
-        if self._translator is None:
+        if self._loaded is None:
             await self.start()
-        assert self._translator is not None
-        assert self._sp_source is not None
-        assert self._sp_target is not None
+        assert self._loaded is not None
 
         drain_task: asyncio.Task[None] | None = None
         if prosody is not None:
@@ -94,9 +188,9 @@ class OpusMTTranslateStage:
                     None,
                     partial(
                         _translate_sync,
-                        self._translator,
-                        self._sp_source,
-                        self._sp_target,
+                        self._loaded.translator,
+                        self._loaded.sp_source,
+                        self._loaded.sp_target,
                         product.text,
                     ),
                 )
