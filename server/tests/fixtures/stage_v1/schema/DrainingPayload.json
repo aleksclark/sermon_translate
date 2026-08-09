@@ -1,0 +1,1 @@
+{"properties":{"active_sessions":{"default":0,"minimum":0,"title":"Active Sessions","type":"integer"},"grace_ms":{"default":0,"minimum":0,"title":"Grace Ms","type":"integer"},"reason":{"title":"Reason","type":"string"}},"required":["reason"],"title":"DrainingPayload","type":"object"}

@@ -1,0 +1,1 @@
+{"$defs":{"CancelScope":{"enum":["utterance","attempt","session"],"title":"CancelScope","type":"string"}},"properties":{"disposed":{"default":true,"title":"Disposed","type":"boolean"},"reason":{"title":"Reason","type":"string"},"scope":{"$ref":"#/$defs/CancelScope"}},"required":["scope","reason"],"title":"CancelledPayload","type":"object"}
