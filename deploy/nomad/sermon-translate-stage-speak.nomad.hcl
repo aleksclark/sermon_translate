@@ -1,17 +1,27 @@
-# Speak (TTS) stage worker.
-# Use gpu_mode=cpu for Kyutai Pocket TTS fallback (zero VRAM).
+# Speak (TTS) stage worker — stage.v1 Wave 6 packaging (declaration only).
 #
-# SAFETY: declaration only.
+# Defaults target edge-tts-es (network voice, no VRAM). Use gpu_mode=cpu and
+# stage_id=pocket-tts-spanish-24l for optional on-box Pocket TTS fallback.
+# /health/ready is the admission gate.
+#
+# SAFETY: declaration only. Validate with: nomad job validate <file>
 
 variable "image" {
-  type    = string
-  default = "sermon-translate-server:gpu"
+  type        = string
+  description = "Container image reference (tag or registry path)."
+  default     = "sermon-translate-server:gpu"
+}
+
+variable "image_digest" {
+  type        = string
+  description = "Optional immutable digest (sha256:...). When set, config.image becomes image@digest."
+  default     = ""
 }
 
 variable "stage_id" {
   type        = string
-  description = "Registered speak stage id (e.g. passthrough-speak, qwen3-tts-0.6b)."
-  default     = "passthrough-speak"
+  description = "Registered speak stage id (warm product default: edge-tts-es)."
+  default     = "edge-tts-es"
 }
 
 variable "model_cache_dir" {
@@ -31,12 +41,12 @@ variable "gpu_model" {
 
 variable "gpu_mode" {
   type        = string
-  description = "device|runtime for GPU TTS; cpu for Pocket TTS fallback."
-  default     = "device"
+  description = "device|runtime for GPU TTS; cpu for edge-tts / Pocket TTS fallback."
+  default     = "cpu"
 
   validation {
     condition     = contains(["device", "runtime", "cpu"], var.gpu_mode)
-    error_message = "gpu_mode must be device, runtime, or cpu."
+    error_message = "Gpu mode must be one of: device, runtime, or cpu."
   }
 }
 
@@ -45,10 +55,35 @@ variable "visible_devices" {
   default = "0"
 }
 
+variable "auth_token" {
+  type        = string
+  description = "Optional bearer token for private WSS (placeholder)."
+  default     = ""
+}
+
+variable "wss_path" {
+  type        = string
+  description = "Private WebSocket path placeholder for stage protocol."
+  default     = "/stage/v1/ws"
+}
+
+locals {
+  resolved_image = var.image_digest != "" ? "${var.image}@${var.image_digest}" : var.image
+}
+
 job "sermon-translate-stage-speak" {
   datacenters = ["home"]
   region      = "home"
   type        = "service"
+
+  meta {
+    stage_kind           = "speak"
+    stage_id             = var.stage_id
+    health_ready_path    = "/health/ready"
+    warm_model_notes     = "edge-tts: no resident weights; pocket-tts: StageHost warm load when installed"
+    private_wss_path     = var.wss_path
+    image_digest_set     = var.image_digest != "" ? "true" : "false"
+  }
 
   dynamic "constraint" {
     for_each = var.gpu_mode == "cpu" ? [] : [1]
@@ -79,10 +114,19 @@ job "sermon-translate-stage-speak" {
       provider = "nomad"
 
       check {
+        name     = "ready"
         type     = "http"
-        path     = "/healthz"
-        interval = "15s"
+        path     = "/health/ready"
+        interval = "10s"
         timeout  = "3s"
+      }
+
+      check {
+        name     = "live"
+        type     = "http"
+        path     = "/health/live"
+        interval = "15s"
+        timeout  = "2s"
       }
     }
 
@@ -90,7 +134,7 @@ job "sermon-translate-stage-speak" {
       driver = "docker"
 
       config {
-        image   = var.image
+        image   = local.resolved_image
         ports   = ["ws"]
         runtime = var.gpu_mode == "cpu" ? "runc" : "nvidia"
         command = "python"
@@ -141,6 +185,8 @@ job "sermon-translate-stage-speak" {
         MODEL_CACHE_DIR        = var.model_cache_dir
         HF_HOME                = "${var.model_cache_dir}/huggingface"
         TORCH_HOME             = "${var.model_cache_dir}/torch"
+        STAGE_WSS_PATH         = var.wss_path
+        STAGE_AUTH_TOKEN       = var.auth_token
       }
     }
   }

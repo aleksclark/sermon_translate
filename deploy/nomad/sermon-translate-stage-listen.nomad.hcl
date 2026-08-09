@@ -1,16 +1,27 @@
-# Listen (ASR) stage worker. Prefer a V100 when real models are loaded.
+# Listen (ASR) stage worker — stage.v1 Wave 6 packaging (declaration only).
+#
+# Defaults target warm whisper-listen replacement path. Models load once via
+# StageHost (D6); /health/ready is the admission gate, not /healthz alone.
 #
 # SAFETY: declaration only. Run deploy/scripts/preflight-gpu.sh first.
+# Do NOT `nomad job run` from CI. Validate with: nomad job validate <file>
 
 variable "image" {
-  type    = string
-  default = "sermon-translate-server:gpu"
+  type        = string
+  description = "Container image reference (tag or registry path)."
+  default     = "sermon-translate-server:gpu"
+}
+
+variable "image_digest" {
+  type        = string
+  description = "Optional immutable digest (sha256:...). When set, config.image becomes image@digest."
+  default     = ""
 }
 
 variable "stage_id" {
   type        = string
-  description = "Registered listen stage id."
-  default     = "passthrough-listen"
+  description = "Registered listen stage id (warm product default: whisper-listen)."
+  default     = "whisper-listen"
 }
 
 variable "model_cache_dir" {
@@ -34,7 +45,7 @@ variable "gpu_mode" {
 
   validation {
     condition     = contains(["device", "runtime", "cpu"], var.gpu_mode)
-    error_message = "gpu_mode must be device, runtime, or cpu."
+    error_message = "Gpu mode must be one of: device, runtime, or cpu."
   }
 }
 
@@ -43,10 +54,35 @@ variable "visible_devices" {
   default = "0"
 }
 
+variable "auth_token" {
+  type        = string
+  description = "Optional bearer token for private WSS (placeholder; wire when auth lands)."
+  default     = ""
+}
+
+variable "wss_path" {
+  type        = string
+  description = "Private WebSocket path placeholder for stage protocol."
+  default     = "/stage/v1/ws"
+}
+
+locals {
+  resolved_image = var.image_digest != "" ? "${var.image}@${var.image_digest}" : var.image
+}
+
 job "sermon-translate-stage-listen" {
   datacenters = ["home"]
   region      = "home"
   type        = "service"
+
+  meta {
+    stage_kind           = "listen"
+    stage_id             = var.stage_id
+    health_ready_path    = "/health/ready"
+    warm_model_notes     = "StageHost loads whisper once; sessions bind via adapters.open_whisper_session_stage"
+    private_wss_path     = var.wss_path
+    image_digest_set     = var.image_digest != "" ? "true" : "false"
+  }
 
   constraint {
     attribute = "${meta.gpu}"
@@ -74,11 +110,22 @@ job "sermon-translate-stage-listen" {
       port     = "ws"
       provider = "nomad"
 
+      # Admission: model warm + canary OK (stage.v1 StageHost).
       check {
+        name     = "ready"
         type     = "http"
-        path     = "/healthz"
-        interval = "15s"
+        path     = "/health/ready"
+        interval = "10s"
         timeout  = "3s"
+      }
+
+      # Process up only — do not use for traffic admission.
+      check {
+        name     = "live"
+        type     = "http"
+        path     = "/health/live"
+        interval = "15s"
+        timeout  = "2s"
       }
     }
 
@@ -86,7 +133,7 @@ job "sermon-translate-stage-listen" {
       driver = "docker"
 
       config {
-        image   = var.image
+        image   = local.resolved_image
         ports   = ["ws"]
         runtime = var.gpu_mode == "cpu" ? "runc" : "nvidia"
         command = "python"
@@ -137,6 +184,11 @@ job "sermon-translate-stage-listen" {
         MODEL_CACHE_DIR        = var.model_cache_dir
         HF_HOME                = "${var.model_cache_dir}/huggingface"
         TORCH_HOME             = "${var.model_cache_dir}/torch"
+        # Warm replacement: whisper-listen (adapters.build_whisper_listen_host)
+        WHISPER_MODEL_SIZE     = "base"
+        # Private WSS / auth placeholders (not enforced until gateway wires them)
+        STAGE_WSS_PATH         = var.wss_path
+        STAGE_AUTH_TOKEN       = var.auth_token
       }
     }
   }
