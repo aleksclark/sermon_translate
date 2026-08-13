@@ -1,0 +1,59 @@
+{
+  "contract_state": "normalized-disabled",
+  "fleet_source_enabled": false,
+  "recon_dispatch_train": false,
+  "jobs": [
+    {
+      "id": "sermon-translate-gpu",
+      "type": "service",
+      "release_set": "sermon-translate-runtime",
+      "health": ["/healthz"]
+    },
+    {
+      "id": "sermon-translate-orchestrator",
+      "type": "service",
+      "release_set": "sermon-translate-runtime",
+      "health": ["/healthz"]
+    },
+    {
+      "id": "sermon-translate-stage-listen",
+      "type": "service",
+      "release_set": "sermon-translate-runtime",
+      "health": ["/health/ready", "/healthz"]
+    },
+    {
+      "id": "sermon-translate-stage-prosody",
+      "type": "service",
+      "release_set": "sermon-translate-runtime",
+      "health": ["/health/ready", "/healthz"]
+    },
+    {
+      "id": "sermon-translate-stage-speak",
+      "type": "service",
+      "release_set": "sermon-translate-runtime",
+      "health": ["/health/ready", "/healthz"]
+    },
+    {
+      "id": "sermon-translate-stage-translate",
+      "type": "service",
+      "release_set": "sermon-translate-runtime",
+      "health": ["/health/ready", "/healthz"]
+    },
+    {
+      "id": "sermon-translate-train",
+      "type": "batch",
+      "release_set": "sermon-translate-train",
+      "recon_never_dispatch": true
+    }
+  ],
+  "secret_variable_paths": [
+    "nomad/jobs/sermon-translate-gpu",
+    "nomad/jobs/sermon-translate-orchestrator",
+    "nomad/jobs/sermon-translate-stage-listen",
+    "nomad/jobs/sermon-translate-stage-prosody",
+    "nomad/jobs/sermon-translate-stage-speak",
+    "nomad/jobs/sermon-translate-stage-translate",
+    "nomad/jobs/sermon-translate-train"
+  ],
+  "images_blocked_until_real_digests": true
+}
