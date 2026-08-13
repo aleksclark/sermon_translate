@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "project": "sermon-translate",
+  "owner": "aleks-clark",
+  "repository": "https://github.com/aleksclark/sermon_translate",
+  "ref_policy": "signed-default-branch-commit",
+  "namespace": "default",
+  "datacenters": ["home"],
+  "release_sets": [
+    {
+      "name": "sermon-translate-runtime",
+      "jobs": [
+        {
+          "id": "sermon-translate-gpu",
+          "spec": "jobs/sermon-translate-gpu.nomad.hcl"
+        },
+        {
+          "id": "sermon-translate-orchestrator",
+          "spec": "jobs/sermon-translate-orchestrator.nomad.hcl"
+        },
+        {
+          "id": "sermon-translate-stage-listen",
+          "spec": "jobs/sermon-translate-stage-listen.nomad.hcl"
+        },
+        {
+          "id": "sermon-translate-stage-prosody",
+          "spec": "jobs/sermon-translate-stage-prosody.nomad.hcl"
+        },
+        {
+          "id": "sermon-translate-stage-speak",
+          "spec": "jobs/sermon-translate-stage-speak.nomad.hcl"
+        },
+        {
+          "id": "sermon-translate-stage-translate",
+          "spec": "jobs/sermon-translate-stage-translate.nomad.hcl"
+        }
+      ],
+      "env": "env/home.nomadvars.hcl",
+      "images": "images.lock.hcl",
+      "variable_paths": [
+        "nomad/jobs/sermon-translate-gpu",
+        "nomad/jobs/sermon-translate-orchestrator",
+        "nomad/jobs/sermon-translate-stage-listen",
+        "nomad/jobs/sermon-translate-stage-prosody",
+        "nomad/jobs/sermon-translate-stage-speak",
+        "nomad/jobs/sermon-translate-stage-translate"
+      ],
+      "rollout": "serial",
+      "prune": "explicit-only"
+    },
+    {
+      "name": "sermon-translate-train",
+      "jobs": [
+        {
+          "id": "sermon-translate-train",
+          "spec": "jobs/sermon-translate-train.nomad.hcl"
+        }
+      ],
+      "env": "env/home.nomadvars.hcl",
+      "images": "images.lock.hcl",
+      "variable_paths": [
+        "nomad/jobs/sermon-translate-train"
+      ],
+      "rollout": "serial",
+      "prune": "explicit-only"
+    }
+  ]
+}
