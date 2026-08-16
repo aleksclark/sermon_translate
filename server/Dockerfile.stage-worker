@@ -1,0 +1,60 @@
+# Immutable stage.v1 worker image (CPU-capable base).
+#
+# Lean image for out-of-process stage workers:
+#   python -m src.runtime.worker --stage-id <id> --host 0.0.0.0 --port 8100
+#
+# Suitable for canary / edge-tts / translate CPU paths. For GPU ASR/TTS with
+# CUDA runtime + cuDNN, build the sibling GPU variant instead:
+#   server/Dockerfile.gpu  (CUDA 12.4; build from repo root — see that file)
+# and override the Nomad job command/args the same way (worker module).
+#
+# Build context: server/  (this directory)
+#   docker build -f Dockerfile.stage-worker -t sermon-translate-stage-worker:<sha> .
+#
+# Defaults install main deps only (no optional extras). seamless-communication
+# is an optional extra sourced from git in pyproject; omit it here so the image
+# stays lean and does not require network git fetch at build time unless you
+# pass --build-arg UV_SYNC_EXTRA_ARGS="--extra seamless".
+
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    PYTHONDONTWRITEBYTECODE=1
+
+# ffmpeg helps edge-tts / audio paths; ca-certificates for HTTPS model pulls.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        ffmpeg \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Optional extras (e.g. "--extra seamless" or "--extra tts-pocket").
+ARG UV_SYNC_EXTRA_ARGS=""
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev ${UV_SYNC_EXTRA_ARGS}
+
+COPY src/ src/
+
+# Nomad jobs invoke `python -m src.runtime.worker` (not `uv run`); put the
+# project venv first on PATH so that works without activating uv each time.
+ENV PATH="/app/.venv/bin:${PATH}" \
+    STAGE_ID=whisper-listen
+
+# Worker default port (Nomad maps host dynamic → 8100).
+EXPOSE 8100
+
+# Liveness only — readiness (/health/ready) requires a warm model and is the
+# Nomad admission check, not the image HEALTHCHECK.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8100/health/live || exit 1
+
+ENTRYPOINT ["python", "-m", "src.runtime.worker"]
+CMD ["--stage-id", "whisper-listen", "--host", "0.0.0.0", "--port", "8100"]

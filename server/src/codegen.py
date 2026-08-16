@@ -15,25 +15,55 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from src.models import (
+    AudioSource,
+    CrosstalkChannelInfo,
+    CrosstalkSessionInfo,
+    ListenProduct,
+    MetadataEnvelope,
+    MetadataKind,
     OutputStreamInfo,
     PipelineInfo,
+    ProsodyFrame,
+    ProsodyToken,
     ServerStats,
     Session,
     SessionCreate,
     SessionStats,
     SessionStatus,
     SessionUpdate,
+    SpeakProduct,
+    StageInfo,
+    StageKind,
+    StageSelection,
+    SynthesisInstructions,
+    TranslateProduct,
+    WordSpan,
 )
 
 SHARED_MODELS: list[type] = [
     SessionStatus,
+    AudioSource,
+    StageKind,
     OutputStreamInfo,
     PipelineInfo,
+    StageInfo,
+    StageSelection,
     SessionCreate,
     SessionUpdate,
     SessionStats,
     Session,
     ServerStats,
+    CrosstalkSessionInfo,
+    CrosstalkChannelInfo,
+    MetadataKind,
+    ProsodyFrame,
+    SynthesisInstructions,
+    MetadataEnvelope,
+    ProsodyToken,
+    WordSpan,
+    ListenProduct,
+    TranslateProduct,
+    SpeakProduct,
 ]
 
 REQUEST_MODELS: set[str] = {"SessionCreate", "SessionUpdate"}
@@ -75,6 +105,12 @@ def _ts_type(schema: dict[str, Any], defs: dict[str, Any]) -> str:
     if json_type == "array":
         items = schema.get("items", {"type": "string"})
         return f"{_ts_type(items, defs)}[]"
+
+    if json_type == "object":
+        additional = schema.get("additionalProperties")
+        if additional is True or additional is None:
+            return "Record<string, unknown>"
+        return f"Record<string, {_ts_type(additional, defs)}>"
 
     return JSON_TO_TS.get(json_type, "unknown")
 

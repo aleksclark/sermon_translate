@@ -1,0 +1,1 @@
+{"properties":{"config_echo":{"additionalProperties":true,"title":"Config Echo","type":"object"},"ready":{"default":true,"title":"Ready","type":"boolean"}},"title":"OpenedPayload","type":"object"}

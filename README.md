@@ -8,6 +8,7 @@ Real-time sermon translation platform with a React frontend and FastAPI backend.
 client/          React 19 + Mantine 8 UI (pnpm, Vite)
 server/          FastAPI + uvicorn (uv, Python 3.12)
 e2e/             Playwright end-to-end tests (Docker Compose)
+deploy/          GPU inference & training infra (Nomad/node-6, CUDA image)
 ```
 
 ### Transport
@@ -74,3 +75,13 @@ cd e2e && bash run.sh
 ## Type Generation
 
 Pydantic models are the single source of truth for the API contract. Run `pnpm typegen` from `client/` after changing any model in `server/src/models/`. Never edit `client/src/api/types.gen.ts` by hand.
+
+## GPU Deployment
+
+`deploy/` contains the foundations for GPU inference and model training on
+node-6 (2 × Tesla V100 16 GB): a CUDA-enabled server image
+(`server/Dockerfile.gpu`), a Nomad inference service, and a Nomad batch training
+template. See [`deploy/README.md`](deploy/README.md) for the GPU image build
+(including the seamless local-dep vendoring), device/constraint stanzas, VRAM
+budgeting, and the capacity/safety notes for co-locating with existing node-6
+workloads.

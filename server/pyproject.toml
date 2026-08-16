@@ -9,13 +9,33 @@ dependencies = [
     "edge-tts>=6.1.0",
     "faster-whisper>=1.1.0",
     "fastapi>=0.135.1",
+    "httpx>=0.28.1",
     "numpy>=1.23",
-    "seamless-communication",
     "sentencepiece>=0.2.0",
     "torch>=2.0",
     "torchaudio>=2.0",
     "transformers>=4.44,<5",
     "uvicorn[standard]>=0.41.0",
+]
+
+[project.optional-dependencies]
+seamless = [
+    "seamless-communication",
+]
+listen-kyutai = [
+    "moshi>=0.2.6",
+    "julius>=0.2.7",
+]
+tts-qwen = []
+tts-pocket = [
+    "pocket-tts>=0.1.0",
+]
+prosody-pyworld = [
+    "pyworld>=0.3.4",
+]
+translate-llm = []
+stages-all = [
+    "sermon-translate-server[seamless,prosody-pyworld,listen-kyutai,tts-pocket]",
 ]
 
 [project.scripts]
@@ -31,7 +51,7 @@ dev = [
 ]
 
 [tool.uv.sources]
-seamless-communication = { path = "../../seamless_communication" }
+seamless-communication = { git = "https://github.com/aleksclark/seamless_communication.git", branch = "main" }
 
 [tool.uv]
 override-dependencies = ["numpy>=2"]
@@ -50,3 +70,6 @@ typeCheckingMode = "standard"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "stage_v1_real: real-model stage.v1 E2E (GPU/network; may skip if unavailable)",
+]

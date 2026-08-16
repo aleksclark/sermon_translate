@@ -1,0 +1,78 @@
+{
+  "schema_version": "stage.v1.audio-fixtures/1",
+  "sample_format": {
+    "codec": "pcm_s16le",
+    "sample_rate_hz": 16000,
+    "channels": 1
+  },
+  "generator": {
+    "tool": "espeak-ng",
+    "version": "1.52.0",
+    "voice": "en-us",
+    "resample": "ffmpeg → 16000 Hz mono pcm_s16le"
+  },
+  "files": {
+    "public-domain-en-01.wav": {
+      "sha256": "aeaf08f19ad9a1226ef094e1362b45e8e0104c57bd1cb714d734a8b92ee68422",
+      "kind": "utterance",
+      "language": "en",
+      "text": "In the beginning God created the heaven and the earth.",
+      "text_license": "KJV public domain (US)",
+      "es_reference": "En el principio creó Dios los cielos y la tierra.",
+      "notes": "Triple utterance with short silences (~12.6s) for pre-EOS Whisper BUFFER_SECONDS=3"
+    },
+    "public-domain-en-01.pcm": {
+      "sha256": "77c50b880dc9071813c9ac1e6b8b1073297a404196dee94b0d17714d4a58e8f5",
+      "kind": "utterance-raw",
+      "language": "en"
+    },
+    "public-domain-en-02.wav": {
+      "sha256": "fd41072172fb0c582cb839f5d3ddfe6c5b836c64ab4c0faa0a3607999b4a806d",
+      "kind": "utterance",
+      "language": "en",
+      "text": "The Lord is my shepherd; I shall not want. He maketh me to lie down in green pastures.",
+      "text_license": "KJV public domain (US)",
+      "es_reference": "Jehová es mi pastor; nada me faltará. En lugares de delicados pastos me hará descansar."
+    },
+    "public-domain-en-02.pcm": {
+      "sha256": "5693905a2f736a5170d9ea58b07ede4f2cedad6c9ac0b926b8ab0e9cb2ebb549",
+      "kind": "utterance-raw",
+      "language": "en"
+    },
+    "public-domain-en-03.wav": {
+      "sha256": "f2732ef1ce3173fde2478338f8c8863ccc3d497683c5dd2fb12d2dcc47273403",
+      "kind": "utterance",
+      "language": "en",
+      "text": "Blessed are the meek: for they shall inherit the earth.",
+      "text_license": "KJV public domain (US)",
+      "es_reference": "Bienaventurados los mansos, porque ellos recibirán la tierra por heredad."
+    },
+    "public-domain-en-03.pcm": {
+      "sha256": "1625407423fff2569dee325cad97b06bfff9cf6fffda19ac68d56246b566a261",
+      "kind": "utterance-raw",
+      "language": "en"
+    },
+    "silence-1s-16k.wav": {
+      "sha256": "0d1facd99af6b4e49919b5647a43bfa62fdcb4c145c27cb803ad7bb3ad06cc8e",
+      "kind": "silence",
+      "duration_s": 1.0
+    },
+    "silence-1s-16k.pcm": {
+      "sha256": "0c92bddb4e96f3ea9ec9f0f64a668255a6c15527ac09f6f119cafde60c7c4a39",
+      "kind": "silence-raw",
+      "duration_s": 1.0
+    },
+    "tone-440hz-500ms-16k.wav": {
+      "sha256": "09a0b8b3fcd62af18e69af5f88f8dea0e1fe6867893b8d2c853123c14475a730",
+      "kind": "tone",
+      "frequency_hz": 440,
+      "duration_s": 0.5
+    },
+    "tone-440hz-500ms-16k.pcm": {
+      "sha256": "6013dfb0e5acc4b69ca4af35feb2565c7fbead2c22a2dda2198a61f31b94c7f6",
+      "kind": "tone-raw",
+      "frequency_hz": 440,
+      "duration_s": 0.5
+    }
+  }
+}

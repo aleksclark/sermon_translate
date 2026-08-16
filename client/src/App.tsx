@@ -67,7 +67,17 @@ function AppContent() {
     };
   }, [activeSession]);
 
-  const { connected, muted, liveStats, transcripts, stop, toggleMute } = useAudioStream(streamOptions);
+  const {
+    connected,
+    muted,
+    error,
+    liveStats,
+    transcripts,
+    metadata,
+    stageProducts,
+    stop,
+    toggleMute,
+  } = useAudioStream(streamOptions);
 
   const streamLabels = useMemo(() => {
     if (!activeSession) return {};
@@ -127,10 +137,14 @@ function AppContent() {
                 <ActiveSessionPanel
                   sessionId={activeSession.session.id}
                   pipelineId={activeSession.session.pipeline_id}
+                  stages={activeSession.session.stages}
                   connected={connected}
                   muted={muted}
+                  error={error}
                   liveStats={liveStats}
                   transcripts={transcripts}
+                  metadata={metadata}
+                  stageProducts={stageProducts}
                   streamLabels={streamLabels}
                   onStop={handleStop}
                   onToggleMute={toggleMute}

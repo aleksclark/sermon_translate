@@ -1,8 +1,9 @@
 import { useEffect, useRef } from "react";
-import { ActionIcon, Badge, Button, Card, Group, ScrollArea, Stack, Text, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Alert, Badge, Button, Card, Group, ScrollArea, Stack, Text, Title, Tooltip } from "@mantine/core";
 import { IconVolume, IconVolumeOff } from "@tabler/icons-react";
-import type { SessionStats } from "../api/index.ts";
-import type { TranscriptLine } from "../hooks/useAudioStream.ts";
+import type { SessionStats, StageSelection } from "../api/index.ts";
+import type { MetadataUpdate, StageProductUpdate, TranscriptLine } from "../hooks/useAudioStream.ts";
+import { StageDebugPanel } from "./StageDebugPanel.tsx";
 
 function bytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -46,25 +47,37 @@ function TranscriptBox({ label, lines }: { label: string; lines: TranscriptLine[
 export function ActiveSessionPanel({
   sessionId,
   pipelineId,
+  stages,
   connected,
   muted,
+  error,
   liveStats,
   transcripts,
+  metadata,
+  stageProducts,
   streamLabels,
   onStop,
   onToggleMute,
 }: {
   sessionId: string;
   pipelineId: string;
+  stages: StageSelection | null;
   connected: boolean;
   muted: boolean;
+  error: string | null;
   liveStats: SessionStats | null;
   transcripts: Record<string, TranscriptLine[]>;
+  metadata: Record<string, MetadataUpdate[]>;
+  stageProducts: Record<string, StageProductUpdate[]>;
   streamLabels: Record<string, string>;
   onStop: () => void;
   onToggleMute: () => void;
 }) {
   const streamNames = Object.keys(transcripts);
+  const hasStageDebug =
+    Object.keys(stageProducts).length > 0 ||
+    Object.keys(metadata).length > 0 ||
+    stages != null;
 
   return (
     <Card withBorder p="md">
@@ -72,13 +85,24 @@ export function ActiveSessionPanel({
         <Text fw={600} size="lg">
           Active Session
         </Text>
-        <Badge color={connected ? "green" : "gray"}>
-          {connected ? "Streaming" : "Disconnected"}
+        <Badge color={connected ? "green" : error ? "red" : "gray"}>
+          {connected ? "Streaming" : error ? "Error" : "Disconnected"}
         </Badge>
       </Group>
       <Stack gap="xs">
         <Text size="sm">Session: {sessionId}</Text>
         <Text size="sm">Pipeline: {pipelineId}</Text>
+        {stages && (
+          <Text size="xs" c="dimmed">
+            listen={stages.listen} · translate={stages.translate} · speak={stages.speak}
+            {stages.prosody ? ` · prosody=${stages.prosody}` : ""}
+          </Text>
+        )}
+        {error && (
+          <Alert color="red" title="Pipeline error" variant="light">
+            {error}
+          </Alert>
+        )}
 
         {liveStats && (
           <>
@@ -112,6 +136,15 @@ export function ActiveSessionPanel({
               />
             ))}
           </Stack>
+        )}
+
+        {hasStageDebug && (
+          <StageDebugPanel
+            stageProducts={stageProducts}
+            metadata={metadata}
+            stages={stages}
+            liveStats={liveStats}
+          />
         )}
 
         <Group justify="flex-end" mt="xs">

@@ -1,0 +1,1 @@
+{"properties":{"config":{"additionalProperties":true,"title":"Config","type":"object"},"utterance_id":{"anyOf":[{"type":"string"},{"type":"null"}],"default":null,"title":"Utterance Id"},"utterance_sequence":{"anyOf":[{"type":"integer"},{"type":"null"}],"default":null,"title":"Utterance Sequence"}},"title":"OpenPayload","type":"object"}

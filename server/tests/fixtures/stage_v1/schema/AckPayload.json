@@ -1,0 +1,1 @@
+{"properties":{"event_sequence":{"anyOf":[{"minimum":0,"type":"integer"},{"type":"null"}],"default":null,"title":"Event Sequence"},"media_sequence":{"anyOf":[{"minimum":0,"type":"integer"},{"type":"null"}],"default":null,"title":"Media Sequence"},"stream_id":{"anyOf":[{"type":"string"},{"type":"null"}],"default":null,"title":"Stream Id"}},"title":"AckPayload","type":"object"}

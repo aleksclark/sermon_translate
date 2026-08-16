@@ -5,13 +5,17 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
-from src.models import OutputStreamInfo, PipelineInfo, Session
+from pydantic import BaseModel
+
+from src.models import MetadataEnvelope, OutputStreamInfo, PipelineInfo, Session, StageKind
 
 
 class OutputStreamKind(StrEnum):
     AUDIO = "audio"
     TEXT = "text"
+    METADATA = "metadata"
 
 
 @dataclass(frozen=True)
@@ -19,6 +23,7 @@ class OutputStreamDescriptor:
     name: str
     kind: OutputStreamKind
     label: str = ""
+    consumes_audio: bool = True
 
 
 class BasePipeline(abc.ABC):
@@ -27,6 +32,15 @@ class BasePipeline(abc.ABC):
     def __init__(self) -> None:
         self._ref_count = 0
         self._ref_lock = asyncio.Lock()
+        self._session_text_queues: dict[
+            tuple[str | None, str], asyncio.Queue[str | None]
+        ] = {}
+        self._session_metadata_queues: dict[
+            tuple[str | None, str], asyncio.Queue[MetadataEnvelope | None]
+        ] = {}
+        self._session_stage_event_queues: dict[
+            str | None, asyncio.Queue[dict[str, Any] | None]
+        ] = {}
 
     @property
     @abc.abstractmethod
@@ -78,7 +92,10 @@ class BasePipeline(abc.ABC):
                 await self._do_stop()
 
     def iter_stream(
-        self, name: str, audio_stream: AsyncIterator[bytes]
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
     ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
         """Return an async iterator for the named output stream.
 
@@ -88,10 +105,151 @@ class BasePipeline(abc.ABC):
         """
         return None
 
-    @staticmethod
-    async def _drain_queue(q: asyncio.Queue[str | None]) -> AsyncIterator[str]:
+    def _text_queue(
+        self, name: str, session: Session | None
+    ) -> asyncio.Queue[str | None]:
+        key = (session.id if session is not None else None, name)
+        queue = self._session_text_queues.get(key)
+        if queue is None:
+            queue = asyncio.Queue(maxsize=8)
+            self._session_text_queues[key] = queue
+        return queue
+
+    async def _publish_text(self, name: str, text: str, session: Session | None) -> None:
+        queue = self._text_queue(name, session)
         while True:
-            text = await q.get()
-            if text is None:
+            try:
+                queue.put_nowait(text)
                 return
-            yield text
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    await asyncio.sleep(0)
+
+    async def _finish_text(self, name: str, session: Session | None) -> None:
+        await self._text_queue(name, session).put(None)
+
+    async def _drain_text(self, name: str, session: Session | None) -> AsyncIterator[str]:
+        key = (session.id if session is not None else None, name)
+        queue = self._text_queue(name, session)
+        try:
+            while True:
+                text = await queue.get()
+                if text is None:
+                    return
+                yield text
+        finally:
+            if self._session_text_queues.get(key) is queue:
+                del self._session_text_queues[key]
+
+    def discard_session_outputs(self, session: Session) -> None:
+        keys = [key for key in self._session_text_queues if key[0] == session.id]
+        for key in keys:
+            del self._session_text_queues[key]
+        metadata_keys = [
+            key for key in self._session_metadata_queues if key[0] == session.id
+        ]
+        for key in metadata_keys:
+            del self._session_metadata_queues[key]
+        self._session_stage_event_queues.pop(session.id, None)
+
+    def _stage_event_queue(
+        self, session: Session | None
+    ) -> asyncio.Queue[dict[str, Any] | None]:
+        key = session.id if session is not None else None
+        queue = self._session_stage_event_queues.get(key)
+        if queue is None:
+            queue = asyncio.Queue(maxsize=8)
+            self._session_stage_event_queues[key] = queue
+        return queue
+
+    async def _publish_stage_event(
+        self, stage: StageKind, product: BaseModel, session: Session | None
+    ) -> None:
+        payload = {
+            "stage": stage.value,
+            "product": product.model_dump(mode="json"),
+        }
+        queue = self._stage_event_queue(session)
+        while True:
+            try:
+                queue.put_nowait(payload)
+                return
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    await asyncio.sleep(0)
+
+    async def _finish_stage_events(self, session: Session | None) -> None:
+        await self._stage_event_queue(session).put(None)
+
+    async def _drain_stage_events(
+        self, session: Session | None
+    ) -> AsyncIterator[dict[str, Any]]:
+        key = session.id if session is not None else None
+        queue = self._stage_event_queue(session)
+        try:
+            while True:
+                item = await queue.get()
+                if item is None:
+                    return
+                yield item
+        finally:
+            if self._session_stage_event_queues.get(key) is queue:
+                del self._session_stage_event_queues[key]
+
+    def iter_stage_events(
+        self, session: Session | None = None
+    ) -> AsyncIterator[dict[str, Any]] | None:
+        """Return structured stage.product events for admin debug fan-out."""
+        return None
+
+    def iter_metadata_stream(
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
+    ) -> AsyncIterator[MetadataEnvelope] | None:
+        """Return an async iterator for the named metadata output stream.
+
+        The handler calls this for every stream declared with
+        ``OutputStreamKind.METADATA``. Return ``None`` if the stream has no data.
+        Subclasses typically drive it from :meth:`_publish_metadata` /
+        :meth:`_finish_metadata` and return :meth:`_drain_metadata`.
+        """
+        return None
+
+    def _metadata_queue(
+        self, name: str, session: Session | None
+    ) -> asyncio.Queue[MetadataEnvelope | None]:
+        key = (session.id if session is not None else None, name)
+        queue = self._session_metadata_queues.get(key)
+        if queue is None:
+            queue = asyncio.Queue(maxsize=8)
+            self._session_metadata_queues[key] = queue
+        return queue
+
+    async def _publish_metadata(
+        self, name: str, envelope: MetadataEnvelope, session: Session | None
+    ) -> None:
+        await self._metadata_queue(name, session).put(envelope)
+
+    async def _finish_metadata(self, name: str, session: Session | None) -> None:
+        await self._metadata_queue(name, session).put(None)
+
+    async def _drain_metadata(
+        self, name: str, session: Session | None
+    ) -> AsyncIterator[MetadataEnvelope]:
+        key = (session.id if session is not None else None, name)
+        queue = self._metadata_queue(name, session)
+        try:
+            while True:
+                envelope = await queue.get()
+                if envelope is None:
+                    return
+                yield envelope
+        finally:
+            if self._session_metadata_queues.get(key) is queue:
+                del self._session_metadata_queues[key]

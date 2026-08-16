@@ -2,6 +2,10 @@
 
 export type SessionStatus = "created" | "active" | "paused" | "closed";
 
+export type AudioSource = "webrtc" | "crosstalk";
+
+export type StageKind = "listen" | "translate" | "speak" | "prosody";
+
 export interface OutputStreamInfo {
   name: string;
   kind: string;
@@ -15,12 +19,31 @@ export interface PipelineInfo {
   output_streams: OutputStreamInfo[];
 }
 
+export interface StageInfo {
+  id: string;
+  kind: StageKind;
+  name: string;
+  description: string;
+  requires_gpu: boolean;
+  default_for_kind: boolean;
+}
+
+export interface StageSelection {
+  listen: string;
+  translate: string;
+  speak: string;
+  prosody: string | null;
+}
+
 export interface SessionCreate {
   pipeline_id: string;
   sample_rate?: number;
   channels?: number;
   label?: string;
   audio_context_seconds?: number;
+  audio_source?: AudioSource;
+  crosstalk_session_id?: string | null;
+  stages?: StageSelection | null;
 }
 
 export interface SessionUpdate {
@@ -46,6 +69,9 @@ export interface Session {
   sample_rate: number;
   channels: number;
   audio_context_seconds: number;
+  audio_source: AudioSource;
+  crosstalk_session_id: string | null;
+  stages: StageSelection | null;
   created_at: number;
   stats: SessionStats;
 }
@@ -56,4 +82,98 @@ export interface ServerStats {
   total_sessions: number;
   total_bytes_processed: number;
   available_pipelines: number;
+}
+
+export interface CrosstalkSessionInfo {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export interface CrosstalkChannelInfo {
+  id: string;
+  name: string;
+  type: string;
+  session_id: string;
+}
+
+export type MetadataKind = "prosody" | "instructions";
+
+export interface ProsodyFrame {
+  f0_hz: number | null;
+  pitch_confidence: number | null;
+  energy: number | null;
+  speaking_rate: number | null;
+  is_pause: boolean | null;
+  boundary: string | null;
+  emphasis: number | null;
+  confidence: number | null;
+  features: Record<string, number>;
+}
+
+export interface SynthesisInstructions {
+  hints: Record<string, unknown>;
+  markers: Record<string, unknown>[];
+}
+
+export interface MetadataEnvelope {
+  schema_version: number;
+  stream: string;
+  kind: MetadataKind;
+  sequence: number;
+  source_utterance_id: string | null;
+  target_utterance_id: string | null;
+  start_ms: number | null;
+  end_ms: number | null;
+  prosody: ProsodyFrame | null;
+  instructions: SynthesisInstructions | null;
+  payload: Record<string, unknown>;
+}
+
+export interface ProsodyToken {
+  pitch_median: number;
+  pitch_range: number;
+  pitch_slope: number;
+  duration: number;
+  energy: number;
+  f0_hz: number | null;
+  energy_rms: number | null;
+  start_ms: number | null;
+  end_ms: number | null;
+}
+
+export interface WordSpan {
+  text: string;
+  start_ms: number | null;
+  end_ms: number | null;
+  conf: number | null;
+  prosody: ProsodyToken | null;
+}
+
+export interface ListenProduct {
+  sequence: number;
+  utterance_id: string;
+  text: string;
+  is_final: boolean;
+  words: WordSpan[];
+  language: string;
+}
+
+export interface TranslateProduct {
+  sequence: number;
+  source_utterance_id: string;
+  target_utterance_id: string;
+  text: string;
+  is_final: boolean;
+  words: WordSpan[];
+  instructions: SynthesisInstructions | null;
+}
+
+export interface SpeakProduct {
+  sequence: number;
+  target_utterance_id: string;
+  pcm: string;
+  sample_rate: number;
+  start_ms: number | null;
+  end_ms: number | null;
 }

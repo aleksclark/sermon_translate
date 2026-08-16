@@ -44,8 +44,6 @@ class SpanishTranslationPipeline(BasePipeline):
         self._translator: Any = None
         self._sp_source: Any = None
         self._sp_target: Any = None
-        self._en_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        self._es_queue: asyncio.Queue[str | None] = asyncio.Queue()
 
     @property
     def info(self) -> PipelineInfo:
@@ -63,10 +61,16 @@ class SpanishTranslationPipeline(BasePipeline):
                 name="audio", kind=OutputStreamKind.AUDIO, label="Spanish Audio",
             ),
             OutputStreamDescriptor(
-                name="en-transcript", kind=OutputStreamKind.TEXT, label="English",
+                name="en-transcript",
+                kind=OutputStreamKind.TEXT,
+                label="English",
+                consumes_audio=False,
             ),
             OutputStreamDescriptor(
-                name="es-transcript", kind=OutputStreamKind.TEXT, label="Spanish",
+                name="es-transcript",
+                kind=OutputStreamKind.TEXT,
+                label="Spanish",
+                consumes_audio=False,
             ),
         ]
 
@@ -84,16 +88,38 @@ class SpanishTranslationPipeline(BasePipeline):
     def _load_whisper(self) -> Any:
         from faster_whisper import WhisperModel
 
-        return WhisperModel(self._whisper_model_size, device="cpu", compute_type="int8")
+        from src.config import get_settings
+
+        settings = get_settings()
+        return WhisperModel(
+            self._whisper_model_size,
+            device=settings.compute_device,
+            compute_type=settings.resolved_compute_type(),
+        )
 
     def _load_translation(self) -> tuple[Any, Any, Any]:
         import ctranslate2
         from huggingface_hub import snapshot_download
 
+        from src.config import get_settings
+
+        settings = get_settings()
         ct2_dir = self._get_ct2_model_dir()
         hf_dir = snapshot_download(TRANSLATION_MODEL_ID)
 
-        translator = ctranslate2.Translator(ct2_dir, device="cpu", compute_type="int8")
+        device = settings.compute_device
+        compute_type = settings.resolved_compute_type()
+        # ctranslate2 accepts cpu/cuda; strip ordinals like cuda:0.
+        if device.startswith("cuda"):
+            device = "cuda"
+        try:
+            translator = ctranslate2.Translator(
+                ct2_dir,
+                device=device,
+                compute_type=compute_type,
+            )
+        except (ValueError, RuntimeError):
+            translator = ctranslate2.Translator(ct2_dir, device="cpu", compute_type="int8")
         sp_src = spm.SentencePieceProcessor()
         sp_src.load(f"{hf_dir}/source.spm")  # type: ignore[attr-defined]
         sp_tgt = spm.SentencePieceProcessor()
@@ -101,17 +127,35 @@ class SpanishTranslationPipeline(BasePipeline):
         return translator, sp_src, sp_tgt
 
     @staticmethod
+    def _ct2_candidate_dirs() -> list[str]:
+        import os
+        from pathlib import Path
+
+        home_cache = Path.home() / ".cache"
+        xdg = Path(os.environ.get("XDG_CACHE_HOME", home_cache))
+        model_cache = os.environ.get("MODEL_CACHE_DIR", "").strip()
+        candidates = [
+            xdg / "sermon_translate" / "opus-mt-en-es-ct2",
+            home_cache / "sermon_translate" / "opus-mt-en-es-ct2",
+            xdg / "sermon-translate" / "models" / "custom" / "opus-mt-en-es" / "ct2",
+            home_cache / "sermon-translate" / "models" / "custom" / "opus-mt-en-es" / "ct2",
+        ]
+        if model_cache:
+            root = Path(model_cache).expanduser()
+            candidates.insert(0, root / "custom" / "opus-mt-en-es" / "ct2")
+            candidates.insert(1, root / "opus-mt-en-es-ct2")
+        return [str(path) for path in candidates]
+
+    @staticmethod
     def _get_ct2_model_dir() -> str:
         import os
 
-        cache_dir = os.path.join(
-            os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
-            "sermon_translate",
-            "opus-mt-en-es-ct2",
-        )
-        model_bin = os.path.join(cache_dir, "model.bin")
-        if not os.path.exists(model_bin):
-            SpanishTranslationPipeline._convert_model(cache_dir)
+        for cache_dir in SpanishTranslationPipeline._ct2_candidate_dirs():
+            if os.path.exists(os.path.join(cache_dir, "model.bin")):
+                return cache_dir
+
+        cache_dir = SpanishTranslationPipeline._ct2_candidate_dirs()[0]
+        SpanishTranslationPipeline._convert_model(cache_dir)
         return cache_dir
 
     @staticmethod
@@ -121,11 +165,15 @@ class SpanishTranslationPipeline(BasePipeline):
         os.makedirs(output_dir, exist_ok=True)
         logger.info("Converting translation model to CTranslate2 (one-time)...")
         try:
+            import torch  # noqa: F401
             from ctranslate2.converters.transformers import TransformersConverter
         except ImportError as exc:
             raise RuntimeError(
-                "Model conversion requires 'torch' and 'transformers' packages. "
-                "Install them or provide a pre-converted model at: " + output_dir
+                "Model conversion requires a working 'torch' import and "
+                "'transformers'. This environment could not import torch "
+                "(often missing CUDA libs such as libcudnn). Install a CPU "
+                "torch build or place a pre-converted CTranslate2 model at: "
+                + output_dir
             ) from exc
 
         converter = TransformersConverter(TRANSLATION_MODEL_ID)
@@ -137,8 +185,6 @@ class SpanishTranslationPipeline(BasePipeline):
         self._translator = None
         self._sp_source = None
         self._sp_target = None
-        await self._en_queue.put(None)
-        await self._es_queue.put(None)
 
     async def process(
         self, audio_stream: AsyncIterator[bytes], session: Session | None = None,
@@ -160,18 +206,21 @@ class SpanishTranslationPipeline(BasePipeline):
             if len(buffer) >= samples_needed:
                 segment = buffer.copy()
                 buffer = np.array([], dtype=np.float32)
-                async for out in self._process_segment(segment, loop):
+                async for out in self._process_segment(segment, loop, session):
                     yield out
 
         if len(buffer) >= min_samples:
-            async for out in self._process_segment(buffer, loop):
+            async for out in self._process_segment(buffer, loop, session):
                 yield out
 
-        await self._en_queue.put(None)
-        await self._es_queue.put(None)
+        await self._finish_text("en-transcript", session)
+        await self._finish_text("es-transcript", session)
 
     async def _process_segment(
-        self, audio: np.ndarray, loop: asyncio.AbstractEventLoop
+        self,
+        audio: np.ndarray,
+        loop: asyncio.AbstractEventLoop,
+        session: Session | None,
     ) -> AsyncIterator[bytes]:
         texts = await loop.run_in_executor(
             None, partial(_transcribe_sync, self._whisper_model, audio)
@@ -183,18 +232,21 @@ class SpanishTranslationPipeline(BasePipeline):
             )
             es_text = await loop.run_in_executor(None, translate_fn)
 
-            await self._en_queue.put(en_text)
-            await self._es_queue.put(es_text)
+            await self._publish_text("en-transcript", en_text, session)
+            await self._publish_text("es-transcript", es_text, session)
 
             pcm_bytes = await synthesize_spanish(es_text, self._sample_rate)
             if pcm_bytes:
                 yield pcm_bytes
 
     def iter_stream(
-        self, name: str, audio_stream: AsyncIterator[bytes]
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
     ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
         if name == "en-transcript":
-            return self._drain_queue(self._en_queue)
+            return self._drain_text(name, session)
         if name == "es-transcript":
-            return self._drain_queue(self._es_queue)
+            return self._drain_text(name, session)
         return None
