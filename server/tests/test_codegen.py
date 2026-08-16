@@ -15,13 +15,24 @@ class TestCodegen:
             "SessionStatus",
             "OutputStreamInfo",
             "PipelineInfo",
+            "StageKind",
+            "StageInfo",
+            "StageSelection",
             "SessionCreate",
             "SessionUpdate",
             "SessionStats",
             "Session",
             "ServerStats",
+            "MetadataKind",
+            "ProsodyFrame",
+            "MetadataEnvelope",
         ]:
             assert name in ts, f"Missing {name}"
+
+    def test_metadata_envelope_uses_open_record_payload(self) -> None:
+        ts = generate_typescript()
+        assert "payload: Record<string, unknown>;" in ts
+        assert "features: Record<string, number>;" in ts
 
     def test_session_status_is_union(self) -> None:
         ts = generate_typescript()

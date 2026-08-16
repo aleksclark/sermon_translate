@@ -1,0 +1,67 @@
+# GPU-enabled server image for the Tesla V100 (compute capability 7.0) on node-6.
+#
+# Base: CUDA 12.4 runtime with cuDNN 9. This satisfies torch>=2, faster-whisper
+# (ctranslate2 needs cuBLAS + cuDNN at runtime), and seamless. The V100 is
+# Volta (sm_70), fully supported by current PyTorch/CUDA 12.x wheels.
+#
+# IMPORTANT: seamless_communication is a LOCAL PATH dependency declared in
+# pyproject.toml as `[tool.uv.sources] seamless-communication = { path =
+# "../../seamless_communication" }`. That path lives OUTSIDE this build context
+# (server/). It is NOT available to `docker build` from server/. You must make
+# it reachable before building. See build strategies below and deploy/README.md.
+#
+# Build strategies (pick one, none is enabled by default):
+#
+#  A) Vendored copy (recommended for CI): copy the sibling checkout into the
+#     build context first, then build with the context at the repo root:
+#         cp -r ../seamless_communication server/vendor/seamless_communication
+#         docker build -f server/Dockerfile.gpu \
+#             --build-arg SEAMLESS_SRC=server/vendor/seamless_communication \
+#             -t sermon-translate-server:gpu .
+#     (run from the repo root so both server/ and the vendored copy are in context)
+#
+#  B) Skip seamless: build without the local dep by overriding the source to a
+#     no-op. The SeamlessStreaming pipeline is already conditional at import
+#     time, so the server still starts; only that one pipeline is unavailable.
+#     Use UV_SYNC_ARGS to exclude it if you maintain an optional extra.
+#
+# This Dockerfile defaults to strategy A. It expects the build context to be the
+# repo ROOT and the seamless source to have been staged at SEAMLESS_SRC.
+
+ARG CUDA_IMAGE=nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
+FROM ${CUDA_IMAGE}
+
+ARG SEAMLESS_SRC=seamless_communication
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    UV_LINK_MODE=copy \
+    UV_PYTHON_DOWNLOADS=never \
+    HF_HOME=/models/hf \
+    COMPUTE_DEVICE=cuda
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3.12 \
+        python3.12-dev \
+        python3.12-venv \
+        ffmpeg \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Stage the seamless local dependency where pyproject's relative source path
+# (../../seamless_communication) resolves. WORKDIR is /app, so ../../ -> /.
+COPY ${SEAMLESS_SRC} /seamless_communication
+
+COPY server/pyproject.toml server/uv.lock ./
+RUN uv sync --frozen --no-dev --python /usr/bin/python3.12
+
+COPY server/src/ src/
+
+EXPOSE 8000
+
+CMD ["uv", "run", "--no-sync", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]

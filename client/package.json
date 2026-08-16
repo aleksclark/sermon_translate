@@ -14,11 +14,6 @@
     "typegen": "cd ../server && uv run python -m src.codegen",
     "typegen:check": "cd ../server && uv run python -m src.codegen --check"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@testing-library/jest-dom": "^6.9.1",

@@ -50,7 +50,10 @@ class WhisperTTSPipeline(BasePipeline):
     def output_streams(self) -> list[OutputStreamDescriptor]:
         return [
             OutputStreamDescriptor(
-                name="transcript", kind=OutputStreamKind.TEXT, label="Transcript",
+                name="transcript",
+                kind=OutputStreamKind.TEXT,
+                label="Transcript",
+                consumes_audio=True,
             ),
         ]
 
@@ -64,7 +67,14 @@ class WhisperTTSPipeline(BasePipeline):
     def _load_model(self):  # type: ignore[no-untyped-def]
         from faster_whisper import WhisperModel
 
-        return WhisperModel(self._model_size, device="cpu", compute_type="int8")
+        from src.config import get_settings
+
+        settings = get_settings()
+        return WhisperModel(
+            self._model_size,
+            device=settings.compute_device,
+            compute_type=settings.resolved_compute_type(),
+        )
 
     async def _do_stop(self) -> None:
         self._model = None
@@ -76,7 +86,10 @@ class WhisperTTSPipeline(BasePipeline):
         yield  # noqa: F841
 
     def iter_stream(
-        self, name: str, audio_stream: AsyncIterator[bytes]
+        self,
+        name: str,
+        audio_stream: AsyncIterator[bytes],
+        session: Session | None = None,
     ) -> AsyncIterator[str] | AsyncIterator[bytes] | None:
         if name == "transcript":
             return self._process_text(audio_stream)

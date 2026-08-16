@@ -14,6 +14,11 @@ class SessionStatus(StrEnum):
     CLOSED = "closed"
 
 
+class AudioSource(StrEnum):
+    WEBRTC = "webrtc"
+    CROSSTALK = "crosstalk"
+
+
 class OutputStreamInfo(BaseModel):
     name: str
     kind: str
@@ -27,12 +32,38 @@ class PipelineInfo(BaseModel):
     output_streams: list[OutputStreamInfo] = Field(default_factory=list)
 
 
+class StageKind(StrEnum):
+    LISTEN = "listen"
+    TRANSLATE = "translate"
+    SPEAK = "speak"
+    PROSODY = "prosody"
+
+
+class StageInfo(BaseModel):
+    id: str
+    kind: StageKind
+    name: str
+    description: str
+    requires_gpu: bool = False
+    default_for_kind: bool = False
+
+
+class StageSelection(BaseModel):
+    listen: str
+    translate: str
+    speak: str
+    prosody: str | None = None
+
+
 class SessionCreate(BaseModel):
     pipeline_id: str
     sample_rate: int = 48000
     channels: int = 1
     label: str = ""
     audio_context_seconds: float = 0.0
+    audio_source: AudioSource = AudioSource.WEBRTC
+    crosstalk_session_id: str | None = None
+    stages: StageSelection | None = None
 
 
 class SessionUpdate(BaseModel):
@@ -63,5 +94,21 @@ class Session(BaseModel):
     sample_rate: int = 48000
     channels: int = 1
     audio_context_seconds: float = 0.0
+    audio_source: AudioSource = AudioSource.WEBRTC
+    crosstalk_session_id: str | None = None
+    stages: StageSelection | None = None
     created_at: float = Field(default_factory=time.time)
     stats: SessionStats = Field(default_factory=SessionStats)
+
+
+class CrosstalkSessionInfo(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+
+
+class CrosstalkChannelInfo(BaseModel):
+    id: str
+    name: str
+    type: str
+    session_id: str

@@ -67,7 +67,8 @@ function AppContent() {
     };
   }, [activeSession]);
 
-  const { connected, muted, liveStats, transcripts, stop, toggleMute } = useAudioStream(streamOptions);
+  const { connected, muted, error, liveStats, transcripts, stop, toggleMute } =
+    useAudioStream(streamOptions);
 
   const streamLabels = useMemo(() => {
     if (!activeSession) return {};
@@ -129,6 +130,7 @@ function AppContent() {
                   pipelineId={activeSession.session.pipeline_id}
                   connected={connected}
                   muted={muted}
+                  error={error}
                   liveStats={liveStats}
                   transcripts={transcripts}
                   streamLabels={streamLabels}

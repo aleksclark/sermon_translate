@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   FileButton,
@@ -11,8 +11,8 @@ import {
   Text,
   TextInput,
 } from "@mantine/core";
-import { createSession, fetchPipelines } from "../api/index.ts";
-import type { PipelineInfo, Session } from "../api/index.ts";
+import { createSession, fetchPipelines, fetchStages } from "../api/index.ts";
+import type { PipelineInfo, Session, StageInfo, StageKind } from "../api/index.ts";
 import { useAudioDevices } from "../hooks/useAudioDevices.ts";
 
 export type AudioSourceType = "mic" | "file";
@@ -20,6 +20,25 @@ export type AudioSourceType = "mic" | "file";
 export interface AudioSource {
   type: AudioSourceType;
   file?: File;
+}
+
+const COMPOSED_PIPELINE_ID = "composed";
+const STAGE_KINDS: StageKind[] = ["listen", "translate", "speak", "prosody"];
+
+function defaultStageId(stages: StageInfo[], kind: StageKind): string {
+  const matching = stages.filter((s) => s.kind === kind);
+  const preferred = matching.find((s) => s.default_for_kind) ?? matching[0];
+  return preferred?.id ?? "";
+}
+
+function stageOptions(stages: StageInfo[], kind: StageKind, allowNone = false) {
+  const options = stages
+    .filter((s) => s.kind === kind)
+    .map((s) => ({ value: s.id, label: s.name }));
+  if (allowNone) {
+    return [{ value: "", label: "None" }, ...options];
+  }
+  return options;
 }
 
 export function NewSessionModal({
@@ -38,7 +57,12 @@ export function NewSessionModal({
   ) => void;
 }) {
   const [pipelines, setPipelines] = useState<PipelineInfo[]>([]);
+  const [stages, setStages] = useState<StageInfo[]>([]);
   const [selectedPipeline, setSelectedPipeline] = useState("");
+  const [listenStage, setListenStage] = useState("");
+  const [translateStage, setTranslateStage] = useState("");
+  const [speakStage, setSpeakStage] = useState("");
+  const [prosodyStage, setProsodyStage] = useState("");
   const [label, setLabel] = useState("");
   const [inputDevice, setInputDevice] = useState("");
   const [outputDevice, setOutputDevice] = useState("");
@@ -51,28 +75,49 @@ export function NewSessionModal({
 
   useEffect(() => {
     if (!opened) return;
-    fetchPipelines().then((p) => {
+    void Promise.all([fetchPipelines(), fetchStages()]).then(([p, s]) => {
       setPipelines(p);
+      setStages(s);
       if (p.length > 0) setSelectedPipeline(p[0].id);
+      setListenStage(defaultStageId(s, "listen"));
+      setTranslateStage(defaultStageId(s, "translate"));
+      setSpeakStage(defaultStageId(s, "speak"));
+      setProsodyStage(defaultStageId(s, "prosody"));
     });
   }, [opened]);
 
   useEffect(() => {
     if (inputs.length > 0 && !inputDevice) setInputDevice(inputs[0].deviceId);
-  }, [inputs]);
+  }, [inputs, inputDevice]);
 
   useEffect(() => {
     if (outputs.length > 0 && !outputDevice) setOutputDevice(outputs[0].deviceId);
-  }, [outputs]);
+  }, [outputs, outputDevice]);
+
+  const selected = pipelines.find((p) => p.id === selectedPipeline);
+  const isComposed = selectedPipeline === COMPOSED_PIPELINE_ID;
+
+  const composedReady = useMemo(() => {
+    if (!isComposed) return true;
+    return Boolean(listenStage && translateStage && speakStage);
+  }, [isComposed, listenStage, translateStage, speakStage]);
 
   const handleCreate = async () => {
-    if (!selectedPipeline) return;
+    if (!selectedPipeline || !selected) return;
     setCreating(true);
     try {
       const session = await createSession({
         pipeline_id: selectedPipeline,
         label: label || undefined,
         audio_context_seconds: audioContextSeconds || undefined,
+        stages: isComposed
+          ? {
+              listen: listenStage,
+              translate: translateStage,
+              speak: speakStage,
+              prosody: prosodyStage || null,
+            }
+          : undefined,
       });
       const source: AudioSource =
         sourceType === "file" && selectedFile
@@ -81,14 +126,12 @@ export function NewSessionModal({
       setLabel("");
       setSelectedFile(null);
       resetRef.current?.();
-      onCreated(session, selected!, inputDevice, outputDevice, source);
+      onCreated(session, selected, inputDevice, outputDevice, source);
       onClose();
     } finally {
       setCreating(false);
     }
   };
-
-  const selected = pipelines.find((p) => p.id === selectedPipeline);
 
   return (
     <Modal opened={opened} onClose={onClose} title="New Session" centered>
@@ -103,6 +146,46 @@ export function NewSessionModal({
           <Text size="xs" c="dimmed">
             {selected.description}
           </Text>
+        )}
+        {isComposed && (
+          <>
+            {STAGE_KINDS.map((kind) => {
+              const allowNone = kind === "prosody";
+              const value =
+                kind === "listen"
+                  ? listenStage
+                  : kind === "translate"
+                    ? translateStage
+                    : kind === "speak"
+                      ? speakStage
+                      : prosodyStage;
+              const onChange =
+                kind === "listen"
+                  ? setListenStage
+                  : kind === "translate"
+                    ? setTranslateStage
+                    : kind === "speak"
+                      ? setSpeakStage
+                      : setProsodyStage;
+              const labelText =
+                kind === "listen"
+                  ? "Listen stage"
+                  : kind === "translate"
+                    ? "Translate stage"
+                    : kind === "speak"
+                      ? "Speak stage"
+                      : "Prosody stage";
+              return (
+                <NativeSelect
+                  key={kind}
+                  label={labelText}
+                  data={stageOptions(stages, kind, allowNone)}
+                  value={value}
+                  onChange={(e) => onChange(e.currentTarget.value)}
+                />
+              );
+            })}
+          </>
         )}
         <TextInput
           label="Label (optional)"
@@ -175,7 +258,11 @@ export function NewSessionModal({
           <Button
             onClick={handleCreate}
             loading={creating}
-            disabled={!selectedPipeline || (sourceType === "file" && !selectedFile)}
+            disabled={
+              !selectedPipeline ||
+              !composedReady ||
+              (sourceType === "file" && !selectedFile)
+            }
           >
             Start Session
           </Button>

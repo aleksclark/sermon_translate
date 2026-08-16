@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { ActionIcon, Badge, Button, Card, Group, ScrollArea, Stack, Text, Title, Tooltip } from "@mantine/core";
+import { ActionIcon, Alert, Badge, Button, Card, Group, ScrollArea, Stack, Text, Title, Tooltip } from "@mantine/core";
 import { IconVolume, IconVolumeOff } from "@tabler/icons-react";
 import type { SessionStats } from "../api/index.ts";
 import type { TranscriptLine } from "../hooks/useAudioStream.ts";
@@ -48,6 +48,7 @@ export function ActiveSessionPanel({
   pipelineId,
   connected,
   muted,
+  error,
   liveStats,
   transcripts,
   streamLabels,
@@ -58,6 +59,7 @@ export function ActiveSessionPanel({
   pipelineId: string;
   connected: boolean;
   muted: boolean;
+  error: string | null;
   liveStats: SessionStats | null;
   transcripts: Record<string, TranscriptLine[]>;
   streamLabels: Record<string, string>;
@@ -72,13 +74,18 @@ export function ActiveSessionPanel({
         <Text fw={600} size="lg">
           Active Session
         </Text>
-        <Badge color={connected ? "green" : "gray"}>
-          {connected ? "Streaming" : "Disconnected"}
+        <Badge color={connected ? "green" : error ? "red" : "gray"}>
+          {connected ? "Streaming" : error ? "Error" : "Disconnected"}
         </Badge>
       </Group>
       <Stack gap="xs">
         <Text size="sm">Session: {sessionId}</Text>
         <Text size="sm">Pipeline: {pipelineId}</Text>
+        {error && (
+          <Alert color="red" title="Pipeline error" variant="light">
+            {error}
+          </Alert>
+        )}
 
         {liveStats && (
           <>
