@@ -58,6 +58,29 @@ Then open http://localhost:5173. The Vite dev server proxies `/api` to the backe
 ./dev.sh
 ```
 
+Host `uv` / `pnpm` / `./dev.sh` stay the non-Docker path.
+
+### Docker Compose (Stacklane)
+
+Parallel worktrees use ephemeral loopback publishes and hierarchical FQDNs:
+
+```text
+web.<instance>.sermon-translate.test:3000
+api.<instance>.sermon-translate.test:8080
+```
+
+```bash
+bash scripts/compose-dev.sh check
+bash scripts/compose-dev.sh up
+bash scripts/compose-dev.sh status
+bash scripts/compose-dev.sh endpoints
+bash scripts/compose-dev.sh logs    # Ctrl-C leaves the stack running
+bash scripts/compose-dev.sh down    # volumes preserved
+CONFIRM=sermon-translate-<instance>-destroy bash scripts/compose-dev.sh destroy
+```
+
+`STACKLANE_INSTANCE` defaults to the worktree directory name. The Vite proxy talks to `http://api:8000` inside Compose. If the Stacklane daemon is absent, `status` reports `stacklane: BLOCKED` and `http://127.0.0.1:<ephemeral>` still works; start with `HMR_HOST= bash scripts/compose-dev.sh up` for direct-loopback HMR. Production images and `e2e/docker-compose.yml` are unchanged.
+
 ## Testing
 
 ```bash

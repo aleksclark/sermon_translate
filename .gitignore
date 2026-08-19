@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 *.egg-info/
 node_modules/
+.pnpm-store/
 dist/
 .env
 server.log

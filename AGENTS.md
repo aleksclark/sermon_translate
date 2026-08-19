@@ -41,8 +41,11 @@ bash run.sh                       # builds client dist, runs Docker Compose Play
 ### Dev Environment
 
 ```
-./dev.sh                          # tmux session: server left, client right
+./dev.sh                          # tmux session: server left, client right (host uv/pnpm)
+bash scripts/compose-dev.sh up    # Stacklane-compatible Docker Compose DEV stack
 ```
+
+Host `./dev.sh`, `uv`, and `pnpm` commands stay the non-Docker path. Compose lifecycle is `scripts/compose-dev.sh` / `paseo.json` (`check`, `up`, `status`, `endpoints`, `logs`, `down`, `destroy`). Production `server/Dockerfile`, `client/Dockerfile`, and `e2e/docker-compose.yml` are unchanged.
 
 ## Type Generation
 
