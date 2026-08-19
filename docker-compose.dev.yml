@@ -1,0 +1,103 @@
+# Sermon Translate Stacklane-compatible local DEV stack.
+# Lifecycle: scripts/compose-dev.sh (always pass -p sermon-translate-<instance>).
+# Publish ONLY 127.0.0.1::<containerPort> (ephemeral host port). Never 0.0.0.0 / fixed host ports.
+#
+# Host fallbacks stay unchanged: ./dev.sh (tmux + uv/pnpm) and e2e/docker-compose.yml.
+# Production images stay in server/Dockerfile and client/Dockerfile.
+# Compose project name is set only via `docker compose -p` (never hardcoded here).
+# No secrets, no .local domains, no host network.
+
+services:
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.dev
+    working_dir: /opt/src
+    environment:
+      STACKLANE_INSTANCE: ${STACKLANE_INSTANCE:-dev}
+      STACKLANE_BASE_DOMAIN: ${STACKLANE_BASE_DOMAIN:-test}
+      UV_PROJECT_ENVIRONMENT: /opt/venv
+      UV_CACHE_DIR: /opt/uv-cache
+      UV_LINK_MODE: copy
+    volumes:
+      - ./server:/opt/src
+      - sermon_translate_api_venv:/opt/venv
+      - sermon_translate_uv_cache:/opt/uv-cache
+    ports:
+      - "127.0.0.1::8000"
+    labels:
+      stacklane.enable: "true"
+      stacklane.project: "sermon-translate"
+      stacklane.instance: ${STACKLANE_INSTANCE:-dev}
+      stacklane.endpoint: "api"
+      stacklane.port: "8080"
+      stacklane.target_port: "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/stats')",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 90s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./client
+      dockerfile: Dockerfile.dev
+    working_dir: /src
+    environment:
+      STACKLANE_INSTANCE: ${STACKLANE_INSTANCE:-dev}
+      STACKLANE_BASE_DOMAIN: ${STACKLANE_BASE_DOMAIN:-test}
+      # Internal Compose DNS — same-origin browser /api via Vite proxy (no CORS hairpin).
+      VITE_API_PROXY_TARGET: http://api:8000
+      VITE_DEV_HOST: "0.0.0.0"
+      VITE_DEV_PORT: "5173"
+      VITE_STRICT_PORT: "1"
+      # When browsers use Stacklane public port 3000, point HMR client at that origin.
+      # Hyphen form (${VAR-default}) lets operators set HMR_HOST= to clear override for direct loopback.
+      HMR_HOST: ${HMR_HOST-web.${STACKLANE_INSTANCE:-dev}.sermon-translate.${STACKLANE_BASE_DOMAIN:-test}}
+      HMR_CLIENT_PORT: ${HMR_CLIENT_PORT-3000}
+      HMR_PROTOCOL: ${HMR_PROTOCOL-ws}
+      DEV_ALLOWED_HOSTS: ${DEV_ALLOWED_HOSTS:-.${STACKLANE_BASE_DOMAIN:-test},localhost,127.0.0.1}
+      PNPM_STORE_DIR: /pnpm/store
+    volumes:
+      - ./client:/src
+      - sermon_translate_web_node_modules:/src/node_modules
+      - sermon_translate_pnpm_store:/pnpm/store
+    ports:
+      - "127.0.0.1::5173"
+    labels:
+      stacklane.enable: "true"
+      stacklane.project: "sermon-translate"
+      stacklane.instance: ${STACKLANE_INSTANCE:-dev}
+      stacklane.endpoint: "web"
+      stacklane.port: "3000"
+      stacklane.target_port: "5173"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:5173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 120s
+    restart: unless-stopped
+
+volumes:
+  sermon_translate_api_venv:
+  sermon_translate_uv_cache:
+  sermon_translate_web_node_modules:
+  sermon_translate_pnpm_store:

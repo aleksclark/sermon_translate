@@ -1,0 +1,11 @@
+{
+  "scripts": {
+    "check": { "command": "bash scripts/compose-dev.sh check" },
+    "up": { "command": "bash scripts/compose-dev.sh up" },
+    "status": { "command": "bash scripts/compose-dev.sh status" },
+    "endpoints": { "command": "bash scripts/compose-dev.sh endpoints" },
+    "logs": { "command": "bash scripts/compose-dev.sh logs" },
+    "down": { "command": "bash scripts/compose-dev.sh down" },
+    "destroy": { "command": "bash scripts/compose-dev.sh destroy" }
+  }
+}

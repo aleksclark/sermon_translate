@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1.7
+# Sermon Translate web DEV image — Vite HMR, source bind-mounted at runtime.
+# Pins match the host toolchain used by ./dev.sh (Node 22.18, pnpm 10.34).
+# Production image remains Dockerfile.
+
+ARG NODE_VERSION=22.18.0
+ARG PNPM_VERSION=10.34.5
+
+FROM node:22.18.0-bookworm
+
+ARG PNPM_VERSION
+ENV PNPM_HOME=/pnpm \
+    PATH=/pnpm:$PATH \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+
+RUN corepack enable \
+ && corepack prepare pnpm@${PNPM_VERSION} --activate \
+ && pnpm --version \
+ && node --version \
+ && mkdir -p /pnpm/store /src
+
+WORKDIR /src
+
+COPY docker-entrypoint.dev.sh /usr/local/bin/sermon-translate-web-dev-entrypoint
+RUN chmod +x /usr/local/bin/sermon-translate-web-dev-entrypoint
+
+EXPOSE 5173
+ENTRYPOINT ["/usr/local/bin/sermon-translate-web-dev-entrypoint"]
+CMD ["pnpm", "exec", "vite", "--host", "0.0.0.0", "--port", "5173", "--strictPort"]
